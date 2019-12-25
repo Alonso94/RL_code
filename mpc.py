@@ -112,7 +112,7 @@ class MPC:
         # np.ile repeat the value
         self.init_variance=np.tile(np.ones(self.action_dim)*0.25,[self.horizon])
         # propagation parameters
-        self.n_particles=7
+        self.n_particles=20
         self.train_in=np.array([]).reshape(0,self.action_dim+self.state_dim)
         self.train_out=np.array([]).reshape(0,self.state_dim)
         # for plotting
@@ -124,7 +124,7 @@ class MPC:
         idx=np.argsort(np.random.uniform(size=array.shape),axis=-1)
         return array[np.arange(array.shape[0])[:,None],idx]
 
-    def rollout(self, render=True, max_length=150):
+    def rollout(self, render=True, max_length=100):
         state = self.env.reset()
         next_state = state
         done = False
@@ -156,7 +156,7 @@ class MPC:
         print("Average action selection time = ", np.mean(times))
         return states, actions, next_states, ret
 
-    def collect_data(self, n_rollouts=1):
+    def collect_data(self, n_rollouts=10):
         inputs, outputs = [], []
         for i in range(n_rollouts):
             states, actions, next_states, ret = self.rollout()
@@ -193,7 +193,6 @@ class MPC:
                 # compute the losses (to a scalar)
                 train_losses=((mean-train_out)**2)*inv_var+logvar
                 train_losses=train_losses.mean(-1).mean(-1).sum()
-                print(train_losses)
                 # compute the full loss
                 loss+=train_losses
                 # train the model
@@ -206,10 +205,9 @@ class MPC:
             train_out = torch.from_numpy(self.train_out[idx[:4000]]).to(device).float()
             mean, _ = self.model(train_in)
             train_losses = ((mean - train_out) ** 2).mean(-1).mean(-1)
-            print(train_losses)
         self.has_trained=True
 
-    def run_the_whole_system(self,num_trials=300):
+    def run_the_whole_system(self,num_trials=40):
         if not self.has_trained:
             self.train_the_model()
         for i in range(num_trials):
@@ -272,17 +270,17 @@ class MPC:
         action_sequences=action_sequences[:,:,None]
         # tile (make copies for particles) -> [25,400,20,1]
         action_sequences=action_sequences.expand(-1,-1,self.n_particles,-1)
-        # reshape -> [25,8000,1]
+        # reshape -> [25,8000,7]
         action_sequences=action_sequences.contiguous().view(self.horizon,-1,self.action_dim)
-
         # prepare the current state
         current_state=torch.from_numpy(self.current_state).to(device).float()
         current_state=current_state[None]
         current_state=current_state.expand(n_action_sequences*self.n_particles,-1)
-
         costs=torch.zeros(n_action_sequences,self.n_particles,device=device)
         for t in range(self.horizon):
             current_action=action_sequences[t]
+            # print(current_action.shape)
+            # print(current_state.shape)
             predicted_next_state=self.predict(current_state,current_action)
             cost=self.state_cost(predicted_next_state)+self.action_cost(current_action)
             cost=cost.view(-1,self.n_particles)
@@ -293,40 +291,50 @@ class MPC:
         return costs.mean(1).detach().cpu().numpy()
 
     def predict(self,state,action):
-        # format the state [10,5] -> [2,5,1,5]
-        state=state.view(-1,self.E,self.n_particles//self.E,state.shape[-1])
-        # transpose [5,2,1,5]
+        input_state=state
+        dim=state.shape[-1]
+        # format the state [8000,10] -> [400,5,4,10]
+        state=state.view(-1,self.E,self.n_particles//self.E,dim)
+        # transpose [5,400,4,10]
         state=state.transpose(0,1)
-        # reshape [5,2,5]
-        state=state.contiguous().view(self.E,-1,state.shape[-1])
+        # reshape [5,1600,10]
+        state=state.contiguous().view(self.E,-1,dim)
 
-        # format the action [10,5]
-        action = action.view(-1, self.E, self.n_particles // self.E, action.shape[-1])
-        # transpose [5,2,1,5]
+        # format the action [8000,7] -> [400,5,4,7]
+        dim=action.shape[-1]
+        action = action.view(-1, self.E, self.n_particles // self.E, dim)
+        # transpose [5,400,40,7]
         action = action.transpose(0, 1)
-        # reshape [5,2,5]
-        action = action.contiguous().view(self.E, -1, action.shape[-1])
+        # reshape [5,1600,7]
+        action = action.contiguous().view(self.E, -1, dim)
 
         #get the output of the model
         inputs=torch.cat((state,action),dim=-1)
+        # mean [5,1600,10]
         mean,var=self.model(inputs)
-        predicted_state=mean+torch.randn_like(mean,device=device)*var.sqrt()
 
+        predicted_state=mean+torch.randn_like(mean,device=device)*var.sqrt()
+        # [5,1600,10]
         #remove additional dimensions
-        predicted_state=predicted_state.view(self.E,-1,self.n_particles//self.E,predicted_state.shape[-1])
+        dim=predicted_state.shape[-1]
+        # [5,400,4,10]
+        predicted_state=predicted_state.view(self.E,-1,self.n_particles//self.E,dim)
+        # [400,5,4,10]
         predicted_state=predicted_state.transpose(0,1)
-        predicted_state=predicted_state.contiguous().view(-1,predicted_state.shape[-1])
-        print(predicted_state)
-        return predicted_state
+        # [8000,10]
+        predicted_state=predicted_state.contiguous().view(-1,dim)
+
+        return input_state+predicted_state
 
     def state_cost(self,state):
         state=state.detach().cpu().numpy()
-        cost=np.linalg.norm(state[:3]-self.env.target)
+        dis=state[:,:3]-self.env.target
+        cost=np.sum(np.square(dis),axis=-1)
         cost=torch.from_numpy(cost).to(device).float()
         return cost
 
     @staticmethod
-    def action_cost(self,action):
+    def action_cost(action):
         return 0.01*(action**2).sum(dim=1)
 
 def set_global_seeds(seed):
