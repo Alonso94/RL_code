@@ -1,7 +1,7 @@
 import time
 import numpy as np
 
-def rollout(env,policy,render=False,max_length=100,random=False):
+def rollout(env,policy,render=False,max_length=150,random=False):
     state=env.reset()
     next_state=state
     done=False

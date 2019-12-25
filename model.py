@@ -13,14 +13,14 @@ def swish(x):
 
 def truncated_norm(size,std):
     val=truncnorm.rvs(a=-2,b=2,size=size,scale=std)
-    return torch.tensor(val,dtype=torch.float)
+    return torch.tensor(val,dtype=torch.float).to(device)
 
 def get_w_b(ensemble_size,input_size,output_size):
     w=truncated_norm(size=(ensemble_size,input_size,output_size),
                      std=1.0/(2.0*np.sqrt(input_size)))
-    w=nn.Parameter(w,requires_grad=True)
+    w=nn.Parameter(w)
     b=torch.zeros(ensemble_size,1,output_size,dtype=torch.float)
-    b = nn.Parameter(b, requires_grad=True)
+    b = nn.Parameter(b)
     return w,b
 
 def shuffle_rows(arr):
@@ -42,8 +42,8 @@ class ensemble(nn.Module):
         self.inputs_mu=nn.Parameter(torch.zeros(input_size),requires_grad=False)
         self.inputs_sigma = nn.Parameter(torch.zeros(input_size), requires_grad=False)
 
-        self.max_logvar=nn.Parameter(torch.ones(1,output_size//2,dtype=torch.float32)/2.0,requires_grad=True)
-        self.min_logvar = nn.Parameter(-torch.ones(1, output_size // 2, dtype=torch.float32) * 10.0, requires_grad=True)
+        self.max_logvar=nn.Parameter(torch.ones(1,output_size//2,dtype=torch.float32)/2.0)
+        self.min_logvar = nn.Parameter(-torch.ones(1, output_size // 2, dtype=torch.float32) * 10.0)
 
     def compute_decays(self):
         layer0_d=0.00025*(self.layer0_w**2).sum()/2.0
@@ -58,9 +58,9 @@ class ensemble(nn.Module):
         sigma=np.std(data,axis=0,keepdims=True)
         sigma[sigma<1e-12]=1.0
         self.inputs_mu.data=torch.from_numpy(mu).to(device).float()
-        self.input_sigma.data=torch.from_numpy(sigma).to(device).float()
+        self.inputs_sigma.data=torch.from_numpy(sigma).to(device).float()
 
-    def forward(self, input,ret_logvar=False):
+    def forward(self, input):
         x=(input-self.inputs_mu)/self.inputs_sigma
         x=x.matmul(self.layer0_w)+self.layer0_b
         x=swish(x)
@@ -71,8 +71,6 @@ class ensemble(nn.Module):
         x = x.matmul(self.layer3_w) + self.layer3_b
         mean=x[:,:,:self.output_size//2]
         logvar=x[:,:,self.output_size//2:]
-        logvar=self.max_logvar+nn.functional.softplus(self.max_logvar-logvar)
-        logvar=self.max_logvar+nn.functional.softplus(self.max_logvar-logvar)
-        if ret_logvar:
-            return mean,logvar
-        return mean,torch.exp(logvar)
+        logvar=self.max_logvar-nn.functional.softplus(self.max_logvar-logvar)
+        logvar=self.min_logvar+nn.functional.softplus(logvar-self.min_logvar)
+        return mean,logvar
