@@ -124,7 +124,7 @@ class MPC:
         idx=np.argsort(np.random.uniform(size=array.shape),axis=-1)
         return array[np.arange(array.shape[0])[:,None],idx]
 
-    def rollout(self, render=True, max_length=100):
+    def rollout(self, render=True, max_length=150):
         state = self.env.reset()
         next_state = state
         done = False
@@ -156,7 +156,7 @@ class MPC:
         print("Average action selection time = ", np.mean(times))
         return states, actions, next_states, ret
 
-    def collect_data(self, n_rollouts=10):
+    def collect_data(self, n_rollouts=1):
         inputs, outputs = [], []
         for i in range(n_rollouts):
             states, actions, next_states, ret = self.rollout()
@@ -207,7 +207,7 @@ class MPC:
             train_losses = ((mean - train_out) ** 2).mean(-1).mean(-1)
         self.has_trained=True
 
-    def run_the_whole_system(self,num_trials=40):
+    def run_the_whole_system(self,num_trials=100):
         if not self.has_trained:
             self.train_the_model()
         for i in range(num_trials):
@@ -327,7 +327,7 @@ class MPC:
         return input_state+predicted_state
 
     def state_cost(self,state):
-        state=state.detach().cpu().numpy()
+        state=state.detach().cpu().numpy().transpose()
         dis=state[:,:3]-self.env.target
         cost=np.sum(np.square(dis),axis=-1)
         cost=torch.from_numpy(cost).to(device).float()
