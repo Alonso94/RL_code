@@ -156,7 +156,7 @@ class MPC:
         print("Average action selection time = ", np.mean(times))
         return states, actions, next_states, ret
 
-    def collect_data(self, n_rollouts=1):
+    def collect_data(self, n_rollouts=10):
         inputs, outputs = [], []
         for i in range(n_rollouts):
             states, actions, next_states, ret = self.rollout()
@@ -207,7 +207,7 @@ class MPC:
             train_losses = ((mean - train_out) ** 2).mean(-1).mean(-1)
         self.has_trained=True
 
-    def run_the_whole_system(self,num_trials=100):
+    def run_the_whole_system(self,num_trials=50):
         if not self.has_trained:
             self.train_the_model()
         for i in range(num_trials):
@@ -243,7 +243,7 @@ class MPC:
         t=0
         mean=previous_solution
         var=self.init_variance
-        truncated_normal=truncnorm(-2,2,loc=np.zeros_like(mean),scale=np.ones_like(var))
+        truncated_normal=truncnorm(self.action_range[0],self.action_range[1],loc=np.zeros_like(mean),scale=np.ones_like(var))
         while t<self.max_iter and np.max(var)>self.var_min:
             samples=truncated_normal.rvs(size=[self.population_size,self.solution_dim])
             samples=samples*np.sqrt(var)+mean
@@ -311,8 +311,8 @@ class MPC:
         #get the output of the model
         inputs=torch.cat((state,action),dim=-1)
         # mean [5,1600,10]
-        mean,var=self.model(inputs)
-
+        mean,logvar=self.model(inputs)
+        var=torch.exp(logvar)
         predicted_state=mean+torch.randn_like(mean,device=device)*var.sqrt()
         # [5,1600,10]
         #remove additional dimensions
@@ -327,8 +327,10 @@ class MPC:
         return input_state+predicted_state
 
     def state_cost(self,state):
-        state=state.detach().cpu().numpy().transpose()
-        dis=state[:,:3]-self.env.target
+        #[8000,10]
+        state=state.detach().cpu().numpy()
+        state=state[:,:3]
+        dis=state-self.env.target
         cost=np.sum(np.square(dis),axis=-1)
         cost=torch.from_numpy(cost).to(device).float()
         return cost
