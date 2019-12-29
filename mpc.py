@@ -6,9 +6,10 @@ import torch
 import torch.nn as nn
 from scipy.stats import truncnorm
 from reacher_env import Reacher
+from cartpole_env import CartPole
 import random
 import matplotlib.pyplot as plt
-
+# import tensorflow as tf
 # from model import ensemble
 
 device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -19,19 +20,23 @@ def swish(x):
 
 def truncated_norm(size,std):
     val=truncnorm.rvs(a=-2,b=2,size=size,scale=std)
+    # cfg = tf.ConfigProto()
+    # cfg.gpu_options.allow_growth = True
+    #
+    # sess = tf.Session(config=cfg)
+    # val = sess.run(tf.truncated_normal(shape=size, stddev=std))
+    #
+    # # Close the session and free resources
+    # sess.close()
     return torch.tensor(val,dtype=torch.float).to(device)
 
 def get_w_b(ensemble_size,input_size,output_size):
     w=truncated_norm(size=(ensemble_size,input_size,output_size),
                      std=1.0/(2.0*np.sqrt(input_size)))
-    w=nn.Parameter(w).to(device)
-    b=torch.zeros(ensemble_size,1,output_size,dtype=torch.float)
-    b = nn.Parameter(b).to(device)
+    w=nn.Parameter(w)
+    b=torch.zeros(ensemble_size,1,output_size,dtype=torch.float32)
+    b = nn.Parameter(b)
     return w,b
-
-def shuffle_rows(arr):
-    idx=np.argsort(np.random.uniform(size=arr.shape),axis=-1)
-    return arr[np.arange(arr.shape[0])[:,None],idx]
 
 class ensemble(nn.Module):
     def __init__(self,ensemble_size,input_size,output_size):
@@ -40,22 +45,22 @@ class ensemble(nn.Module):
         self.input_size=input_size
         self.output_size=output_size
 
-        self.layer0_w,self.layer0_b=get_w_b(ensemble_size,input_size,200)
-        self.layer1_w, self.layer1_b = get_w_b(ensemble_size, 200, 200)
-        self.layer2_w, self.layer2_b = get_w_b(ensemble_size, 200, 200)
-        self.layer3_w, self.layer3_b = get_w_b(ensemble_size, 200, output_size)
+        self.layer0_w,self.layer0_b=get_w_b(ensemble_size,input_size,500)
+        self.layer1_w, self.layer1_b = get_w_b(ensemble_size, 500, 500)
+        self.layer2_w, self.layer2_b = get_w_b(ensemble_size, 500, 500)
+        self.layer3_w, self.layer3_b = get_w_b(ensemble_size, 500, 2*output_size)
 
         self.inputs_mu=nn.Parameter(torch.zeros(input_size),requires_grad=False)
         self.inputs_sigma = nn.Parameter(torch.zeros(input_size), requires_grad=False)
 
-        self.max_logvar=nn.Parameter(torch.ones(1,output_size,dtype=torch.float32)/2.0).to(device)
-        self.min_logvar = nn.Parameter(-torch.ones(1, output_size , dtype=torch.float32) * 10.0).to(device)
+        self.max_logvar=nn.Parameter(torch.ones(1,output_size,dtype=torch.float32)/2.0)
+        self.min_logvar = nn.Parameter(-torch.ones(1, output_size , dtype=torch.float32) * 10.0)
 
     def compute_decays(self):
-        layer0_d=0.00025*(self.layer0_w**2).sum()/2.0
-        layer1_d = 0.0005 * (self.layer1_w ** 2).sum() / 2.0
-        layer2_d = 0.0005 * (self.layer2_w ** 2).sum() / 2.0
-        layer3_d = 0.00075 * (self.layer3_w ** 2).sum() / 2.0
+        layer0_d=0.0001*(self.layer0_w**2).sum()/2.0
+        layer1_d = 0.00025 * (self.layer1_w ** 2).sum() / 2.0
+        layer2_d = 0.00025 * (self.layer2_w ** 2).sum() / 2.0
+        layer3_d = 0.0005 * (self.layer3_w ** 2).sum() / 2.0
         decays=layer0_d+layer1_d+layer2_d+layer3_d
         return decays
 
@@ -76,7 +81,7 @@ class ensemble(nn.Module):
         x = swish(x)
         x = x.matmul(self.layer3_w) + self.layer3_b
         mean=x[:,:,:self.output_size]
-        logvar=x[:,:,:self.output_size]
+        logvar=x[:,:,self.output_size:]
         logvar=self.max_logvar-nn.functional.softplus(self.max_logvar-logvar)
         logvar=self.min_logvar+nn.functional.softplus(logvar-self.min_logvar)
         return mean,logvar
@@ -84,33 +89,36 @@ class ensemble(nn.Module):
 class MPC:
     def __init__(self,env):
         self.env=env
-        self.action_dim=env.action_space.shape[0]
-        self.state_dim=env.observation_space.shape[0]
+        self.action_dim=env.action_dim
+        self.state_dim=env.state_dim
+        self.action_range=env.action_range
         # MPC parameters
         self.horizon=25
         self.action_buffer=np.array([]).reshape(0,self.action_dim)
-        self.previous_solution=np.tile(np.zeros(self.action_dim),[self.horizon])
+        self.previous_solution=np.tile((self.action_range[0]+self.action_range[1])/2.0,[self.horizon])
         # Ensemble parameters
         self.E=5
         self.input_size=self.action_dim+self.state_dim
         self.output_size=self.state_dim
         self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
         self.model.optim=torch.optim.Adam(self.model.parameters(),lr=0.001)
-        self.n_train_iter=100
+        self.init_rollouts = 1
+        self.n_train_iter=15
+        self.rol_per_iter=1
         self.epochs=5
         self.batch_size=32
-        self.init_population=2000
         self.has_trained=False
         # CEM parameters
         self.solution_dim=self.horizon*self.action_dim
+        self.opt_lb=np.tile(self.action_range[0],[self.horizon])
+        self.opt_ub = np.tile(self.action_range[1], [self.horizon])
         self.population_size=400
         self.n_elites=40
         self.max_iter=5
         self.alpha=0.1
         self.var_min=0.001
-        self.action_range=[-0.2,0.2]
         # np.ile repeat the value
-        self.init_variance=np.tile(np.ones(self.action_dim)*0.25,[self.horizon])
+        self.init_variance=np.tile(np.square(self.action_range[1]-self.action_range[0])/16.0,[self.horizon])
         # propagation parameters
         self.n_particles=20
         self.train_in=np.array([]).reshape(0,self.action_dim+self.state_dim)
@@ -124,53 +132,64 @@ class MPC:
         idx=np.argsort(np.random.uniform(size=array.shape),axis=-1)
         return array[np.arange(array.shape[0])[:,None],idx]
 
-    def rollout(self, render=True, max_length=150):
+    def rollout(self, render=False, plot=True, max_length=200):
         state = self.env.reset()
-        next_state = state
-        done = False
         ret=0
         times = []
         next_states, states, actions, rewards = [], [], [], []
         for t in range(max_length):
-            self.x+=1
             start = time.time()
-            action = self.act(state,t)
+            action = self.act(state)
             end = time.time()
-            times.append(start - end)
+            times.append(end-start)
+            if self.has_trained:
+                self.x+=1
             states.append(state)
             actions.append(action)
-            next_state, reward, done, _ = self.env.step(action)
-            next_states.append(next_state)
+            state, reward, done, _ = self.env.step(action)
+            next_states.append(state)
+            # state=next_state.copy()
             ret += reward
             if render:
                 self.env.render()
             if done:
                 break
-        self.xx.append(self.x)
-        self.returns.append(ret)
-        plt.figure()
-        plt.plot(self.xx, self.returns)
-        plt.xlabel('Training step')
-        plt.ylabel('Cumulative rewards')
-        plt.show()
-        print("Average action selection time = ", np.mean(times))
+        if self.has_trained and plot:
+            self.xx.append(self.x)
+            self.returns.append(ret)
+            plt.figure()
+            plt.plot(self.xx, self.returns)
+            plt.xlabel('Training step')
+            plt.ylabel('Cumulative rewards')
+            plt.show()
+            print("\nAverage action selection time = ", np.mean(times))
+        print("episode length = ",len(states))
         return states, actions, next_states, ret
 
-    def collect_data(self, n_rollouts=10):
+    def collect_data(self, n_rollouts=1):
         inputs, outputs = [], []
         for i in range(n_rollouts):
             states, actions, next_states, ret = self.rollout()
-            input = np.concatenate([states, actions], axis=-1)
-            inputs.append(input)
+            input_ = np.concatenate([np.array(states), np.array(actions)], axis=-1)
+            inputs.append(input_)
             outputs.append(np.array(next_states) - np.array(states))
         return inputs, outputs
 
-    def train_the_model(self):
+    def run_the_whole_system(self,num_trials=15):
         if not self.has_trained:
             # prepare inputs and output
-            D_inputs,D_outputs=self.collect_data()
-            self.train_in=np.concatenate([self.train_in]+D_inputs,axis=0)
-            self.train_out=np.concatenate([self.train_out]+D_outputs,axis=0)
+            D_inputs, D_outputs = self.collect_data(n_rollouts=self.init_rollouts)
+            self.train_in = np.concatenate([self.train_in] + D_inputs, axis=0)
+            self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
+            self.train_the_model()
+        for i in range(num_trials):
+            print("start training ...")
+            D_inputs, D_outputs = self.collect_data(n_rollouts=self.rol_per_iter)
+            self.train_in = np.concatenate([self.train_in] + D_inputs, axis=0)
+            self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
+            self.train_the_model()
+
+    def train_the_model(self):
         self.model.get_input_stats(self.train_in)
         # sample from the data
         # E datasets, one for each neural network in the ensemble
@@ -189,6 +208,7 @@ class MPC:
                 train_out=torch.from_numpy(self.train_out[b_indx]).to(device).float()
                 # compute the output of the model
                 mean,logvar=self.model(train_in)
+                # print(logvar)
                 inv_var=torch.exp(-logvar)
                 # compute the losses (to a scalar)
                 train_losses=((mean-train_out)**2)*inv_var+logvar
@@ -200,31 +220,20 @@ class MPC:
                 loss.backward()
                 self.model.optim.step()
             idx=self.shufle_rows(idx)
-            # just to get the loss
-            train_in = torch.from_numpy(self.train_in[idx[:4000]]).to(device).float()
-            train_out = torch.from_numpy(self.train_out[idx[:4000]]).to(device).float()
-            mean, _ = self.model(train_in)
-            train_losses = ((mean - train_out) ** 2).mean(-1).mean(-1)
+        # just to get the loss
+        train_in = torch.from_numpy(self.train_in[idx[:5000]]).to(device).float()
+        train_out = torch.from_numpy(self.train_out[idx[:5000]]).to(device).float()
+        mean, _ = self.model(train_in)
+        train_losses = ((mean - train_out) ** 2).mean(-1).mean(-1)
+        print(train_losses.detach().cpu().numpy())
         self.has_trained=True
 
-    def run_the_whole_system(self,num_trials=50):
-        if not self.has_trained:
-            self.train_the_model()
-        for i in range(num_trials):
-            states, actions, next_states, ret=self.rollout()
-            input = np.concatenate([states, actions], axis=-1)
-            output=np.array(next_states) - np.array(states)
-            self.train_in = np.concatenate([self.train_in, input], axis=0)
-            self.train_out = np.concatenate([self.train_out, output], axis=0)
-            self.train_the_model()
-
-
-    def act(self,state,t):
+    def act(self,state):
         if not self.has_trained:
             #random if not trained
             return np.random.uniform(low=self.action_range[0],high=self.action_range[1],size=self.action_dim)
         if self.action_buffer.shape[0]>0:
-            # execute the first action
+        #     # execute the first action
             action=self.action_buffer[0]
             self.action_buffer=self.action_buffer[1:]
             return action
@@ -236,19 +245,28 @@ class MPC:
         all_exept_first=np.copy(solution)[self.action_dim:]
         self.previous_solution=np.concatenate([all_exept_first,np.zeros(self.action_dim)])
         self.action_buffer=solution[:self.action_dim].reshape(-1,self.action_dim)
-        return self.act(state,t)
+        # solution=solutions[:self.action_dim]
+        return self.act(state)
 
     def obtain_solution(self,previous_solution):
         # CEM
         t=0
-        mean=previous_solution
-        var=self.init_variance
-        truncated_normal=truncnorm(self.action_range[0],self.action_range[1],loc=np.zeros_like(mean),scale=np.ones_like(var))
-        while t<self.max_iter and np.max(var)>self.var_min:
+        mean=previous_solution.copy()
+        var=self.init_variance.copy()
+        # truncated_normal=truncnorm(self.action_range[0],self.action_range[1],loc=np.zeros_like(mean),scale=np.ones_like(var))
+        truncated_normal=truncnorm(-2,2,loc=np.zeros_like(mean),scale=np.ones_like(var))
+        while (t<self.max_iter) and np.max(var)>self.var_min:
+            lb=mean-self.opt_lb
+            ub=self.opt_ub-mean
+            cd_var=np.minimum(np.minimum(np.square(lb/2),np.square(ub/2)),var)
+
             samples=truncated_normal.rvs(size=[self.population_size,self.solution_dim])
-            samples=samples*np.sqrt(var)+mean
+            samples=samples*np.sqrt(cd_var)+mean
             samples=samples.astype(np.float32)
+
             costs=self.propagate_to_find_costs(samples)
+
+            # arg sort from smaller to larger
             elites=samples[np.argsort(costs)][:self.n_elites]
             new_mean=np.mean(elites,axis=0)
             new_var=np.var(elites,axis=0)
@@ -279,14 +297,15 @@ class MPC:
         costs=torch.zeros(n_action_sequences,self.n_particles,device=device)
         for t in range(self.horizon):
             current_action=action_sequences[t]
-            # print(current_action.shape)
-            # print(current_state.shape)
             predicted_next_state=self.predict(current_state,current_action)
-            cost=self.state_cost(predicted_next_state)+self.action_cost(current_action)
+            state_cost=self.env.state_cost(predicted_next_state)
+            cost=state_cost#+self.env.action_cost(current_action)
             cost=cost.view(-1,self.n_particles)
             costs+=cost
             current_state=predicted_next_state
-        # NaN -> hgih cost
+        # print(costs)
+        # x=input()
+        # NaN -> high cost
         costs[costs!=costs]=1e6
         return costs.mean(1).detach().cpu().numpy()
 
@@ -326,25 +345,16 @@ class MPC:
 
         return input_state+predicted_state
 
-    def state_cost(self,state):
-        #[8000,10]
-        state=state.detach().cpu().numpy()
-        state=state[:,:3]
-        dis=state-self.env.target
-        cost=np.sum(np.square(dis),axis=-1)
-        cost=torch.from_numpy(cost).to(device).float()
-        return cost
-
-    @staticmethod
-    def action_cost(action):
-        return 0.01*(action**2).sum(dim=1)
-
 def set_global_seeds(seed):
     torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
+    # tf.set_random_seed(seed)
 
 set_global_seeds(0)
-env=Reacher()
+# env=Reacher()
+env=CartPole()
 mpc=MPC(env)
 mpc.run_the_whole_system()

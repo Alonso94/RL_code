@@ -1,11 +1,17 @@
 import numpy as np
 import gym
 import time
+import torch
+device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
 class Reacher():
     def __init__(self):
         self.env = gym.make('FetchReach-v1').env
         self.action_space = gym.spaces.Box(shape=(7,),low=-0.1,high=0.1)
         self.observation_space = gym.spaces.Box(shape=(10,),low=-np.inf, high=np.inf)
+        self.action_dim = self.action_space.shape[0]
+        self.state_dim = self.observation_space.shape[0]
+        self.action_range=[-0.2,0.2]
         self.q=np.zeros(7)
         self.target=np.array([]).reshape(0,3)
         self.q = [0.0, -1.0, 0.0, 2.0, 0.0, 0.5, 0.0]
@@ -53,3 +59,16 @@ class Reacher():
     def render(self):
         self.env.render()
         time.sleep(1/30)
+
+    def state_cost(self,state):
+        #[8000,10]
+        state=state.detach().cpu().numpy()
+        state=state[:,:3]
+        dis=state-self.env.target
+        cost=np.sum(np.square(dis),axis=-1)
+        cost = torch.from_numpy(cost).to(device).float()
+        return cost
+
+    @staticmethod
+    def action_cost(action):
+        return 0.01*(action**2).sum(dim=1)
