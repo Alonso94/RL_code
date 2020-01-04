@@ -5,8 +5,8 @@ from tqdm import trange
 import torch
 import torch.nn as nn
 from scipy.stats import truncnorm
-from reacher_env import Reacher
-from cartpole_env import CartPole
+from env.reacher_env import Reacher
+from env.env_sim import rozum_sim
 import random
 import matplotlib.pyplot as plt
 # import tensorflow as tf
@@ -92,10 +92,12 @@ class MPC:
         self.action_dim=env.action_dim
         self.state_dim=env.state_dim
         self.action_range=env.action_range
+        self.action_lb=self.env.action_space.low
+        self.action_ub=self.env.action_space.high
         # MPC parameters
-        self.horizon=25
+        self.horizon=8
         self.action_buffer=np.array([]).reshape(0,self.action_dim)
-        self.previous_solution=np.tile((self.action_range[0]+self.action_range[1])/2.0,[self.horizon])
+        self.previous_solution=np.tile((self.action_lb+self.action_ub)/2.0,[self.horizon])
         # Ensemble parameters
         self.E=5
         self.input_size=self.action_dim+self.state_dim
@@ -110,15 +112,15 @@ class MPC:
         self.has_trained=False
         # CEM parameters
         self.solution_dim=self.horizon*self.action_dim
-        self.opt_lb=np.tile(self.action_range[0],[self.horizon])
-        self.opt_ub = np.tile(self.action_range[1], [self.horizon])
+        self.opt_lb=np.tile(self.action_lb,[self.horizon])
+        self.opt_ub = np.tile(self.action_ub, [self.horizon])
         self.population_size=400
         self.n_elites=40
         self.max_iter=5
         self.alpha=0.1
         self.var_min=0.001
         # np.ile repeat the value
-        self.init_variance=np.tile(np.square(self.action_range[1]-self.action_range[0])/16.0,[self.horizon])
+        self.init_variance=np.tile(np.square(self.action_ub-self.action_lb)/16.0,[self.horizon])
         # propagation parameters
         self.n_particles=20
         self.train_in=np.array([]).reshape(0,self.action_dim+self.state_dim)
@@ -132,12 +134,13 @@ class MPC:
         idx=np.argsort(np.random.uniform(size=array.shape),axis=-1)
         return array[np.arange(array.shape[0])[:,None],idx]
 
-    def rollout(self, render=False, plot=True, max_length=200):
+    def rollout(self, render=False, plot=True, max_length=50):
         state = self.env.reset()
         ret=0
         times = []
         next_states, states, actions, rewards = [], [], [], []
-        for t in range(max_length):
+        train_range=trange(max_length)
+        for t in train_range:
             start = time.time()
             action = self.act(state)
             end = time.time()
@@ -231,7 +234,7 @@ class MPC:
     def act(self,state):
         if not self.has_trained:
             #random if not trained
-            return np.random.uniform(low=self.action_range[0],high=self.action_range[1],size=self.action_dim)
+            return np.random.uniform(low=self.action_lb,high=self.action_ub,size=self.action_dim)
         if self.action_buffer.shape[0]>0:
         #     # execute the first action
             action=self.action_buffer[0]
@@ -253,8 +256,8 @@ class MPC:
         t=0
         mean=previous_solution.copy()
         var=self.init_variance.copy()
-        # truncated_normal=truncnorm(self.action_range[0],self.action_range[1],loc=np.zeros_like(mean),scale=np.ones_like(var))
-        truncated_normal=truncnorm(-2,2,loc=np.zeros_like(mean),scale=np.ones_like(var))
+        truncated_normal=truncnorm(a=self.action_range[0],b=self.action_range[1],loc=np.zeros_like(mean),scale=np.ones_like(var))
+        # truncated_normal=truncnorm(-2,2,loc=np.zeros_like(mean),scale=np.ones_like(var))
         while (t<self.max_iter) and np.max(var)>self.var_min:
             lb=mean-self.opt_lb
             ub=self.opt_ub-mean
@@ -355,6 +358,7 @@ def set_global_seeds(seed):
 
 set_global_seeds(0)
 # env=Reacher()
-env=CartPole()
+# env=CartPole()
+env=rozum_sim()
 mpc=MPC(env)
 mpc.run_the_whole_system()

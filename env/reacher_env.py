@@ -12,7 +12,6 @@ class Reacher():
         self.action_dim = self.action_space.shape[0]
         self.state_dim = self.observation_space.shape[0]
         self.action_range=[-0.2,0.2]
-        self.q=np.zeros(7)
         self.target=np.array([]).reshape(0,3)
         self.q = [0.0, -1.0, 0.0, 2.0, 0.0, 0.5, 0.0]
 
@@ -32,9 +31,9 @@ class Reacher():
         self.env.sim.forward()
         time.sleep(1 / 30)
         ob=self.env._get_obs()
-        s=np.concatenate((ob['achieved_goal'],self.q),axis=0)
+        s=np.concatenate((ob['achieved_goal']-self.target,self.q),axis=0)
         d=np.linalg.norm(ob["achieved_goal"]-ob["desired_goal"])
-        done=(abs(d)<0.01)
+        done=False
         r=-d-0.01*np.square(action).sum()
         return s,r,done,None
 
@@ -54,7 +53,7 @@ class Reacher():
             self.env.sim.data.set_joint_qpos(name, value)
         ob = self.env._get_obs()
         self.target=ob["desired_goal"]
-        return np.concatenate((ob['achieved_goal'],self.q),axis=0)
+        return np.concatenate((ob['achieved_goal']-self.target,self.q),axis=0)
 
     def render(self):
         self.env.render()
@@ -63,8 +62,8 @@ class Reacher():
     def state_cost(self,state):
         #[8000,10]
         state=state.detach().cpu().numpy()
-        state=state[:,:3]
-        dis=state-self.env.target
+        dis=state[:,:3]
+        # dis=state-self.env.target.copy()
         cost=np.sum(np.square(dis),axis=-1)
         cost = torch.from_numpy(cost).to(device).float()
         return cost

@@ -43,10 +43,10 @@ class CartPole():
         theta=torch.atan2(state[:,2],state[:,3])
         ee_pose=torch.stack([state[:,0]-state[:,2],state[:,3]]).transpose(0,1)
         cost= ((ee_pose-self.target_ee_pose)**2).sum(dim=-1)
-        cost -torch.exp(-cost)
+        cost=-torch.exp(-cost)
         return cost
 
     @staticmethod
     def action_cost(action):
-        return 0.01*(action**2).sum(dim=1)
+        return 0.001*(action**2).sum(dim=1)
 CartPole()
