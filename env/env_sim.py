@@ -7,30 +7,37 @@ import cv2
 import math
 import os
 import gym
-import subprocess,signal
+import subprocess, signal
 import torch
-device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+from threading import Thread
+
 
 class rozum_sim:
 
     def __init__(self):
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        self.out = cv2.VideoWriter('output.mp4', fourcc, 15.0, (1024, 1024))
+
         self.DoF = 6
         # self.action_bound = [[-15,15],[-10,110],[-30,30],[-120,120],[-180,180],[-180,180]]
         self.action_bound = [[-180, 180], [-180, 180], [-180, 180], [-180, 180], [-180, 180], [-180, 180]]
-        self.action_range=[-5,5]
+        self.action_range = [-5, 5]
         self.action_dim = self.DoF
 
         self.action_space = gym.spaces.Box(shape=(self.DoF,), low=-5, high=5)
-        self.observation_space = gym.spaces.Box(shape=(3+self.DoF*2,), low=-180, high=180)
+        self.observation_space = gym.spaces.Box(shape=(3 + self.DoF * 2,), low=-180, high=180)
         self.action_dim = self.action_space.shape[0]
         self.state_dim = self.observation_space.shape[0]
 
-        p=subprocess.Popen(['ps','-A'],stdout=subprocess.PIPE)
-        out,err=p.communicate()
+        p = subprocess.Popen(['ps', '-A'], stdout=subprocess.PIPE)
+        out, err = p.communicate()
         for line in out.splitlines():
             if b'vrep' in line:
-                pid=int(line.split(None,-1)[0])
-                os.kill(pid,signal.SIGKILL)
+                pid = int(line.split(None, -1)[0])
+                os.kill(pid, signal.SIGKILL)
 
         self.vrep_root = "/home/ali/Downloads/VREP"
         self.scene_file = "/home/ali/RL_code/env/rozum_model.ttt"
@@ -52,6 +59,9 @@ class rozum_sim:
         # for camera
         self.cam_handle = self.get_handle('Vision_sensor')
         (code, res, im) = vrep.simxGetVisionSensorImage(self.ID, self.cam_handle, 0, const_v.simx_opmode_streaming)
+
+        self.render_handle = self.get_handle('render')
+        (code, res, im) = vrep.simxGetVisionSensorImage(self.ID, self.render_handle, 0, const_v.simx_opmode_streaming)
 
         # joints
         self.joint_handles = []
@@ -111,31 +121,38 @@ class rozum_sim:
         # print(code)
         return np.array(pose)
 
-    def close_gripper(self):
-        code=vrep.simxSetJointForce(self.ID, self.gripper_motor, 20, const_v.simx_opmode_blocking)
+    def close_gripper(self, render=False):
+        code = vrep.simxSetJointForce(self.ID, self.gripper_motor, 20, const_v.simx_opmode_blocking)
         # print(code)
-        code=vrep.simxSetJointTargetVelocity(self.ID, self.gripper_motor, -0.05, const_v.simx_opmode_blocking)
+        code = vrep.simxSetJointTargetVelocity(self.ID, self.gripper_motor, -0.05, const_v.simx_opmode_blocking)
+        if render:
+            self.render()
         # print(code)
         # time.sleep(0.1)
 
-    def open_gripper(self):
-        code=vrep.simxSetJointForce(self.ID, self.gripper_motor, 20, const_v.simx_opmode_blocking)
+    def open_gripper(self, render=False):
+        code = vrep.simxSetJointForce(self.ID, self.gripper_motor, 20, const_v.simx_opmode_blocking)
         # print(code)
-        code=vrep.simxSetJointTargetVelocity(self.ID, self.gripper_motor, 0.05, const_v.simx_opmode_blocking)
+        code = vrep.simxSetJointTargetVelocity(self.ID, self.gripper_motor, 0.05, const_v.simx_opmode_blocking)
+        if render:
+            self.render()
         # print(code)
-        #time.sleep(0.1)
+        # time.sleep(0.1)
 
     def get_image(self, cam_handle):
         (code, res, im) = vrep.simxGetVisionSensorImage(self.ID, cam_handle, 0, const_v.simx_opmode_buffer)
         # print(code)
         img = np.array(im, dtype=np.uint8)
         img.resize([res[0], res[1], 3])
-        img=cv2.flip(img,0)
+        img = cv2.flip(img, 0)
         return img
 
-    def move_joint(self, num, value):
+    def move_joint(self, num, value, render=False):
         # in radian
-        code=vrep.simxSetJointTargetPosition(self.ID, self.joint_handles[num], value*math.pi/180, const_v.simx_opmode_blocking)
+        code = vrep.simxSetJointTargetPosition(self.ID, self.joint_handles[num], value * math.pi / 180,
+                                               const_v.simx_opmode_blocking)
+        if render:
+            self.render()
         # print(code)
         # time.sleep(0.3)
 
@@ -143,7 +160,7 @@ class rozum_sim:
         angles = []
         for i in range(self.DoF):
             code, angle = vrep.simxGetJointPosition(self.ID, self.joint_handles[i], const_v.simx_opmode_buffer)
-            angles.append(angle*180/math.pi)
+            angles.append(angle * 180 / math.pi)
         return angles
 
     def sample_action(self):
@@ -156,19 +173,44 @@ class rozum_sim:
             angle = np.clip(self.angles[i], *self.action_bound[i])
             self.move_joint(i, angle)
         time.sleep(0.5)
-        angles=self.get_angles()
-        pose= self.get_position(self.tip_handle)
-        target= self.get_position(self.cube_handle)
+        angles = self.get_angles()
+        pose = self.get_position(self.tip_handle)
+        r = 0.0
+        done = False
+        if self.task_part == 0:
+            target = self.get_position(self.cube_handle)
+            r = 0.0
+        else:
+            target = self.get_position(self.goal_handle)
+            target[2] += 0.1
+            cube = self.get_position(self.cube_handle)
+            if np.linalg.norm(pose - cube) > 0.05:
+                done = True
+            else:
+                r += 10
         # pose = np.array([a *10 for a in pose])
         # target = np.array([a *10 for a in target])
-        sin_cos=[]
+        sin_cos = []
         for a in angles:
             sin_cos.append(np.sin(a))
             sin_cos.append(np.cos(a))
         s = np.concatenate([pose, sin_cos], axis=0)
-        d = np.linalg.norm(pose-target)
-        done = False
-        r = -d - 0.01 * np.square(action).sum()
+        d = np.linalg.norm(pose - target)
+        r += (-d - 0.01 * np.square(action).sum())
+        if d < 0.02 and self.task_part == 0:
+            self.task_part = 1
+            self.close_gripper(render=True)
+            time.sleep(1)
+            self.angles = self.init_angles.copy()
+            for i in range(self.DoF):
+                self.move_joint(i, self.angles[i], render=True)
+            time.sleep(3)
+            return s, r, done, None
+        if self.task_part == 1 and abs(target[2] - pose[2]) < 0.05:
+            self.open_gripper(render=True)
+            time.sleep(2)
+            r += 10
+            done = True
         return s, r, done, None
 
     def reset(self):
@@ -176,13 +218,14 @@ class rozum_sim:
         self.angles = self.init_angles.copy()
         for i in range(self.DoF):
             self.move_joint(i, self.angles[i])
+        self.open_gripper()
         vrep.simxSetObjectPosition(self.ID, self.cube_handle, -1, self.init_pose_cube, const_v.simx_opmode_oneshot_wait)
         vrep.simxSetObjectPosition(self.ID, self.goal_handle, -1, self.init_goal_pose, const_v.simx_opmode_oneshot_wait)
         time.sleep(2)
         angles = self.get_angles()
         pose = self.get_position(self.tip_handle)
         # pose = [a *10 for a in pose]
-        sin_cos=[]
+        sin_cos = []
         for a in angles:
             sin_cos.append(np.sin(a))
             sin_cos.append(np.cos(a))
@@ -191,14 +234,17 @@ class rozum_sim:
 
     def state_cost(self, state):
         # [8000,10]
-        target = self.get_position(self.cube_handle)
+        if self.task_part == 0:
+            target = self.get_position(self.cube_handle)
+        else:
+            target = self.get_position(self.goal_handle)
+            target[2] += 0.1
         # target = np.array([a*10 for a in target])
-        target=torch.from_numpy(target).to(device).float()
-        dis = state[:, :3] -target
-        dis=dis*10
+        target = torch.from_numpy(target).to(device).float()
+        dis = state[:, :3] - target
         # dis = state - self.env.target
-        cost = (dis**2).sum(dim=-1)
-        cost = torch.exp(-cost)
+        cost = (dis ** 2).sum(dim=-1)
+        cost = -torch.exp(-cost)
         return cost
 
     @staticmethod
@@ -206,6 +252,5 @@ class rozum_sim:
         return 0.01 * (action ** 2).sum(dim=1)
 
     def render(self):
-        im=self.get_image(self.cam_handle)
-        cv2.imshow("render",im)
-        cv2.waitKey(10)
+        img = self.get_image(self.render_handle)
+        self.out.write(img)

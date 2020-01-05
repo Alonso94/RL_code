@@ -95,20 +95,20 @@ class MPC:
         self.action_lb=self.env.action_space.low
         self.action_ub=self.env.action_space.high
         # MPC parameters
-        self.horizon=8
+        self.horizon=5
         self.action_buffer=np.array([]).reshape(0,self.action_dim)
         self.previous_solution=np.tile((self.action_lb+self.action_ub)/2.0,[self.horizon])
         # Ensemble parameters
-        self.E=5
+        self.E=15
         self.input_size=self.action_dim+self.state_dim
         self.output_size=self.state_dim
         self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
         self.model.optim=torch.optim.Adam(self.model.parameters(),lr=0.001)
         self.init_rollouts = 1
-        self.n_train_iter=15
+        self.n_train_iter=50
         self.rol_per_iter=1
-        self.epochs=5
-        self.batch_size=32
+        self.epochs=10
+        self.batch_size=64
         self.has_trained=False
         # CEM parameters
         self.solution_dim=self.horizon*self.action_dim
@@ -122,7 +122,7 @@ class MPC:
         # np.ile repeat the value
         self.init_variance=np.tile(np.square(self.action_ub-self.action_lb)/16.0,[self.horizon])
         # propagation parameters
-        self.n_particles=20
+        self.n_particles=30
         self.train_in=np.array([]).reshape(0,self.action_dim+self.state_dim)
         self.train_out=np.array([]).reshape(0,self.state_dim)
         # for plotting
@@ -134,7 +134,7 @@ class MPC:
         idx=np.argsort(np.random.uniform(size=array.shape),axis=-1)
         return array[np.arange(array.shape[0])[:,None],idx]
 
-    def rollout(self, render=False, plot=True, max_length=50):
+    def rollout(self, render=True, plot=True, max_length=50):
         state = self.env.reset()
         ret=0
         times = []
@@ -178,7 +178,7 @@ class MPC:
             outputs.append(np.array(next_states) - np.array(states))
         return inputs, outputs
 
-    def run_the_whole_system(self,num_trials=15):
+    def run_the_whole_system(self,num_trials=50):
         if not self.has_trained:
             # prepare inputs and output
             D_inputs, D_outputs = self.collect_data(n_rollouts=self.init_rollouts)
@@ -191,6 +191,7 @@ class MPC:
             self.train_in = np.concatenate([self.train_in] + D_inputs, axis=0)
             self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
             self.train_the_model()
+        self.env.out.release()
 
     def train_the_model(self):
         self.model.get_input_stats(self.train_in)
