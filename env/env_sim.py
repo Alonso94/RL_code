@@ -28,7 +28,7 @@ class rozum_sim:
         self.action_dim = self.DoF
 
         self.action_space = gym.spaces.Box(shape=(self.DoF,), low=-5, high=5)
-        self.observation_space = gym.spaces.Box(shape=(3 + self.DoF * 2,), low=-180, high=180)
+        self.observation_space = gym.spaces.Box(shape=(3 + 6 + self.DoF * 2,), low=-180, high=180)
         self.action_dim = self.action_space.shape[0]
         self.state_dim = self.observation_space.shape[0]
 
@@ -73,9 +73,12 @@ class rozum_sim:
         # gripper tip
         self.tip_handle = self.get_handle("Tip")
         (code, pose) = vrep.simxGetObjectPosition(self.ID, self.tip_handle, -1, const_v.simx_opmode_streaming)
+        self.or_handle = self.get_handle("RG2_baseVisible")
+        (code, pose) = vrep.simxGetObjectOrientation(self.ID, self.or_handle, -1, const_v.simx_opmode_streaming)
         # cube
         self.cube_handle = self.get_handle("Cube")
         (code, pose) = vrep.simxGetObjectPosition(self.ID, self.cube_handle, -1, const_v.simx_opmode_streaming)
+        (code, pose) = vrep.simxGetObjectOrientation(self.ID, self.cube_handle, -1, const_v.simx_opmode_streaming)
         # get the goal handle
         self.goal_handle = self.get_handle("Goal")
         (code, pose) = vrep.simxGetObjectPosition(self.ID, self.goal_handle, -1, const_v.simx_opmode_streaming)
@@ -89,7 +92,7 @@ class rozum_sim:
         self.task_part = 0
 
         self.init_angles = self.get_angles()
-
+        self.init_orientation=self.get_orientation(self.or_handle)
         self.init_pose_cube = self.get_position(self.cube_handle)
         # print(self.init_pose_cube)
         self.init_goal_pose = self.get_position(self.goal_handle)
@@ -120,6 +123,11 @@ class rozum_sim:
         (code, pose) = vrep.simxGetObjectPosition(self.ID, handle, -1, const_v.simx_opmode_buffer)
         # print(code)
         return np.array(pose)
+
+    def get_orientation(self,handle):
+        (code, ornt) = vrep.simxGetObjectOrientation(self.ID, handle, -1, const_v.simx_opmode_buffer)
+        # print(code)
+        return np.array([np.sin(ornt[0]),np.cos(ornt[0]),np.sin(ornt[1]),np.cos(ornt[1]),np.sin(ornt[2]),np.cos(ornt[2])])
 
     def close_gripper(self, render=False):
         code = vrep.simxSetJointForce(self.ID, self.gripper_motor, 20, const_v.simx_opmode_blocking)
@@ -172,9 +180,10 @@ class rozum_sim:
             self.angles[i] += action[i]
             angle = np.clip(self.angles[i], *self.action_bound[i])
             self.move_joint(i, angle)
-        time.sleep(0.5)
+        time.sleep(0.3)
         angles = self.get_angles()
         pose = self.get_position(self.tip_handle)
+        orientation=self.get_orientation(self.or_handle)
         r = 0.0
         done = False
         if self.task_part == 0:
@@ -194,7 +203,7 @@ class rozum_sim:
         for a in angles:
             sin_cos.append(np.sin(a))
             sin_cos.append(np.cos(a))
-        s = np.concatenate([pose, sin_cos], axis=0)
+        s = np.concatenate([pose,orientation, sin_cos], axis=0)
         d = np.linalg.norm(pose - target)
         r += (-d - 0.01 * np.square(action).sum())
         if d < 0.02 and self.task_part == 0:
@@ -224,26 +233,34 @@ class rozum_sim:
         time.sleep(2)
         angles = self.get_angles()
         pose = self.get_position(self.tip_handle)
+        orientation = self.get_orientation(self.or_handle)
         # pose = [a *10 for a in pose]
         sin_cos = []
         for a in angles:
             sin_cos.append(np.sin(a))
             sin_cos.append(np.cos(a))
-        s = np.concatenate([pose, sin_cos], axis=0)
+        s = np.concatenate([pose,orientation, sin_cos], axis=0)
         return s
 
     def state_cost(self, state):
         # [8000,10]
         if self.task_part == 0:
-            target = self.get_position(self.cube_handle)
+            target= self.get_position(self.cube_handle)
+            cube_or=self.get_orientation(self.cube_handle)
+            target = torch.from_numpy(target).to(device).float()
+            target_or = torch.from_numpy(cube_or).to(device).float()
+            dis = state[:, :3] - target
+            or_diff = state[:, 3:9] - target_or
+            # dis = state - self.env.target
+            cost = (dis ** 2).sum(dim=-1) + torch.mul((or_diff ** 2).sum(dim=-1),0.1)
         else:
             target = self.get_position(self.goal_handle)
             target[2] += 0.1
-        # target = np.array([a*10 for a in target])
-        target = torch.from_numpy(target).to(device).float()
-        dis = state[:, :3] - target
-        # dis = state - self.env.target
-        cost = (dis ** 2).sum(dim=-1)
+            target = torch.from_numpy(target).to(device).float()
+            dis = state[:, :3] - target
+            # dis = state - self.env.target
+            cost = (dis ** 2).sum(dim=-1)
+            # target = np.array([a*10 for a in target])
         cost = -torch.exp(-cost)
         return cost
 

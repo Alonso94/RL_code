@@ -20,14 +20,6 @@ def swish(x):
 
 def truncated_norm(size,std):
     val=truncnorm.rvs(a=-2,b=2,size=size,scale=std)
-    # cfg = tf.ConfigProto()
-    # cfg.gpu_options.allow_growth = True
-    #
-    # sess = tf.Session(config=cfg)
-    # val = sess.run(tf.truncated_normal(shape=size, stddev=std))
-    #
-    # # Close the session and free resources
-    # sess.close()
     return torch.tensor(val,dtype=torch.float).to(device)
 
 def get_w_b(ensemble_size,input_size,output_size):
@@ -99,7 +91,7 @@ class MPC:
         self.action_buffer=np.array([]).reshape(0,self.action_dim)
         self.previous_solution=np.tile((self.action_lb+self.action_ub)/2.0,[self.horizon])
         # Ensemble parameters
-        self.E=15
+        self.E=10
         self.input_size=self.action_dim+self.state_dim
         self.output_size=self.state_dim
         self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
@@ -107,7 +99,7 @@ class MPC:
         self.init_rollouts = 1
         self.n_train_iter=50
         self.rol_per_iter=1
-        self.epochs=10
+        self.epochs=5
         self.batch_size=64
         self.has_trained=False
         # CEM parameters
@@ -122,11 +114,13 @@ class MPC:
         # np.ile repeat the value
         self.init_variance=np.tile(np.square(self.action_ub-self.action_lb)/16.0,[self.horizon])
         # propagation parameters
-        self.n_particles=30
+        self.n_particles=20
         self.train_in=np.array([]).reshape(0,self.action_dim+self.state_dim)
         self.train_out=np.array([]).reshape(0,self.state_dim)
         # for plotting
         self.x=0
+        self.count=0
+        self.count_done=0
         self.xx=[]
         self.returns=[]
 
@@ -159,6 +153,10 @@ class MPC:
                 break
         if self.has_trained and plot:
             self.xx.append(self.x)
+            if ret>0:
+                self.count+=1
+                if ret>70:
+                    self.count_done+=1
             self.returns.append(ret)
             plt.figure()
             plt.plot(self.xx, self.returns)
@@ -178,7 +176,7 @@ class MPC:
             outputs.append(np.array(next_states) - np.array(states))
         return inputs, outputs
 
-    def run_the_whole_system(self,num_trials=50):
+    def run_the_whole_system(self,num_trials=60):
         if not self.has_trained:
             # prepare inputs and output
             D_inputs, D_outputs = self.collect_data(n_rollouts=self.init_rollouts)
