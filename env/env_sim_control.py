@@ -215,7 +215,6 @@ class rozum_sim:
     def state_cost(self, state):
         # [8000,10]
         target = self.init_pose_cube.copy()
-        target[2] += 0.1
         target = torch.from_numpy(target).to(device).float()
         dis = state[:, :3] - target
         # dis = state - self.env.target
@@ -226,7 +225,7 @@ class rozum_sim:
 
     @staticmethod
     def action_cost(action):
-        return 0.001 * (action ** 2).sum(dim=1)
+        return 0.01 * (action ** 2).sum(dim=1)
 
     def render(self):
         img = self.get_image(self.render_handle)
