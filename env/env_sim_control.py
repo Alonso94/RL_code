@@ -226,7 +226,7 @@ class rozum_sim:
 
     @staticmethod
     def action_cost(action):
-        return 0.01 * (action ** 2).sum(dim=1)
+        return 0.001 * (action ** 2).sum(dim=1)
 
     def render(self):
         img = self.get_image(self.render_handle)

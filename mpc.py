@@ -91,7 +91,7 @@ class MPC:
         self.action_buffer=np.array([]).reshape(0,self.action_dim)
         self.previous_solution=np.tile((self.action_lb+self.action_ub)/2.0,[self.horizon])
         # Ensemble parameters
-        self.E=10
+        self.E=15
         self.input_size=self.action_dim+self.state_dim
         self.output_size=self.state_dim
         self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
@@ -104,7 +104,7 @@ class MPC:
         self.init_rollouts = 1
         self.n_train_iter=50
         self.rol_per_iter=1
-        self.epochs=5
+        self.epochs=10
         self.batch_size=64
         # CEM parameters
         self.solution_dim=self.horizon*self.action_dim
@@ -118,7 +118,7 @@ class MPC:
         # np.ile repeat the value
         self.init_variance=np.tile(np.square(self.action_ub-self.action_lb)/16.0,[self.horizon])
         # propagation parameters
-        self.n_particles=20
+        self.n_particles=30
         self.train_in=np.array([]).reshape(0,self.action_dim+self.state_dim)
         self.train_out=np.array([]).reshape(0,self.state_dim)
         # for plotting
@@ -198,8 +198,9 @@ class MPC:
             self.train_in = np.concatenate([self.train_in] + D_inputs, axis=0)
             self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
             self.train_the_model()
+            self.evaluate(trial=i)
         self.env.out.release()
-        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/ensemble_e10_u6_s9+12.pth")
+        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/ensemble_e15_u6_s9+12_p30.pth")
         print("model saved!")
         plt.figure()
         plt.plot(self.xx, self.returns)
@@ -221,7 +222,7 @@ class MPC:
         plt.show()
         plt.savefig("/home/ali/RL_code/images/done.png")
 
-    def evaluate(self,max_length=50,render=False):
+    def evaluate(self,max_length=50,render=False,trial=0):
         state = self.env.reset()
         x=0
         train_range = trange(max_length)
@@ -242,7 +243,7 @@ class MPC:
         plt.plot(xx, yy)
         plt.xlabel('time')
         plt.ylabel('distance')
-        plt.savefig("step_response.png")
+        plt.savefig("/home/ali/RL_code/images/step_response%d.png"%trial)
         plt.show()
 
 
@@ -414,6 +415,5 @@ set_global_seeds(0)
 # env=Reacher()
 # env=CartPole()
 env=rozum_sim()
-mpc=MPC(env,load=True)
-# mpc.run_the_whole_system(num_trials=1)
-mpc.evaluate()
+mpc=MPC(env,load=False)
+mpc.run_the_whole_system(num_trials=50)
