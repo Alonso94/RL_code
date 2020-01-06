@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from scipy.stats import truncnorm
 from env.reacher_env import Reacher
-from env.env_sim import rozum_sim
+from env.env_sim_control import rozum_sim
 import random
 import matplotlib.pyplot as plt
 # import tensorflow as tf
@@ -42,8 +42,8 @@ class ensemble(nn.Module):
         self.layer2_w, self.layer2_b = get_w_b(ensemble_size, 500, 500)
         self.layer3_w, self.layer3_b = get_w_b(ensemble_size, 500, 2*output_size)
 
-        self.inputs_mu=nn.Parameter(torch.zeros(input_size),requires_grad=False)
-        self.inputs_sigma = nn.Parameter(torch.zeros(input_size), requires_grad=False)
+        self.inputs_mu=nn.Parameter(torch.zeros(1,input_size),requires_grad=False)
+        self.inputs_sigma = nn.Parameter(torch.zeros(1,input_size), requires_grad=False)
 
         self.max_logvar=nn.Parameter(torch.ones(1,output_size,dtype=torch.float32)/2.0)
         self.min_logvar = nn.Parameter(-torch.ones(1, output_size , dtype=torch.float32) * 10.0)
@@ -79,7 +79,7 @@ class ensemble(nn.Module):
         return mean,logvar
 
 class MPC:
-    def __init__(self,env):
+    def __init__(self,env,load=False):
         self.env=env
         self.action_dim=env.action_dim
         self.state_dim=env.state_dim
@@ -95,13 +95,17 @@ class MPC:
         self.input_size=self.action_dim+self.state_dim
         self.output_size=self.state_dim
         self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
+        self.has_trained = False
+        if load:
+            self.model.load_state_dict(torch.load("/home/ali/RL_code/models/ensemble_e10_u6_s9+12.pth",map_location=device))
+            self.model.eval()
+            self.has_trained=True
         self.model.optim=torch.optim.Adam(self.model.parameters(),lr=0.001)
         self.init_rollouts = 1
         self.n_train_iter=50
         self.rol_per_iter=1
         self.epochs=5
         self.batch_size=64
-        self.has_trained=False
         # CEM parameters
         self.solution_dim=self.horizon*self.action_dim
         self.opt_lb=np.tile(self.action_lb,[self.horizon])
@@ -123,12 +127,15 @@ class MPC:
         self.count_done=0
         self.xx=[]
         self.returns=[]
+        self.picked=[]
+        self.ds=[]
+        self.dist=[]
 
     def shufle_rows(self,array):
         idx=np.argsort(np.random.uniform(size=array.shape),axis=-1)
         return array[np.arange(array.shape[0])[:,None],idx]
 
-    def rollout(self, render=True, plot=True, max_length=50):
+    def rollout(self, render=False, plot=True, max_length=50,evaluate=False):
         state = self.env.reset()
         ret=0
         times = []
@@ -157,6 +164,8 @@ class MPC:
                 self.count+=1
                 if ret>70:
                     self.count_done+=1
+            self.picked.append(self.count)
+            self.ds.append(self.count_done)
             self.returns.append(ret)
             plt.figure()
             plt.plot(self.xx, self.returns)
@@ -190,6 +199,52 @@ class MPC:
             self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
             self.train_the_model()
         self.env.out.release()
+        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/ensemble_e10_u6_s9+12.pth")
+        print("model saved!")
+        plt.figure()
+        plt.plot(self.xx, self.returns)
+        plt.xlabel('Training step')
+        plt.ylabel('Cumulative rewards')
+        plt.show()
+        plt.savefig("/home/ali/RL_code/images/rewards.png")
+        plt.figure()
+        plt.plot(self.xx, self.count)
+        plt.xlabel('Training step')
+        plt.ylabel('Cube picked')
+        plt.show()
+        plt.savefig("/home/ali/RL_code/images/pick.png")
+        plt.show()
+        plt.figure()
+        plt.plot(self.xx, self.ds)
+        plt.xlabel('Training step')
+        plt.ylabel('done count')
+        plt.show()
+        plt.savefig("/home/ali/RL_code/images/done.png")
+
+    def evaluate(self,max_length=50,render=False):
+        state = self.env.reset()
+        x=0
+        train_range = trange(max_length)
+        xx=[]
+        yy=[]
+        for t in train_range:
+            action = self.act(state)
+            x += 1
+            state, reward, done, _ = self.env.step(action)
+            d = np.linalg.norm(state[:3] - self.env.init_pose_cube)
+            xx.append(x)
+            yy.append(d)
+            if render:
+                self.env.render()
+            if done:
+                break
+        plt.figure()
+        plt.plot(xx, yy)
+        plt.xlabel('time')
+        plt.ylabel('distance')
+        plt.savefig("step_response.png")
+        plt.show()
+
 
     def train_the_model(self):
         self.model.get_input_stats(self.train_in)
@@ -359,5 +414,6 @@ set_global_seeds(0)
 # env=Reacher()
 # env=CartPole()
 env=rozum_sim()
-mpc=MPC(env)
-mpc.run_the_whole_system()
+mpc=MPC(env,load=True)
+# mpc.run_the_whole_system(num_trials=1)
+mpc.evaluate()

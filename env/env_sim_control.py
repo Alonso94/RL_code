@@ -28,7 +28,7 @@ class rozum_sim:
         self.action_dim = self.DoF
 
         self.action_space = gym.spaces.Box(shape=(self.DoF,), low=-5, high=5)
-        self.observation_space = gym.spaces.Box(shape=(3 + 6 + self.DoF * 2,), low=-180, high=180)
+        self.observation_space = gym.spaces.Box(shape=(3 + self.DoF * 2,), low=-180, high=180)
         self.action_dim = self.action_space.shape[0]
         self.state_dim = self.observation_space.shape[0]
 
@@ -183,43 +183,15 @@ class rozum_sim:
         time.sleep(0.3)
         angles = self.get_angles()
         pose = self.get_position(self.tip_handle)
-        orientation=self.get_orientation(self.or_handle)
         r = 0.0
         done = False
-        if self.task_part == 0:
-            target = self.get_position(self.cube_handle)
-            r = 0.0
-        else:
-            target = self.get_position(self.goal_handle)
-            target[2] += 0.1
-            cube = self.get_position(self.cube_handle)
-            if np.linalg.norm(pose - cube) > 0.05:
-                done = True
-            else:
-                r += 10
-        # pose = np.array([a *10 for a in pose])
-        # target = np.array([a *10 for a in target])
         sin_cos = []
         for a in angles:
             sin_cos.append(np.sin(a))
             sin_cos.append(np.cos(a))
-        s = np.concatenate([pose,orientation, sin_cos], axis=0)
-        d = np.linalg.norm(pose - target)
+        s = np.concatenate([pose, sin_cos], axis=0)
+        d = np.linalg.norm(pose - self.init_pose_cube)
         r += (-d - 0.01 * np.square(action).sum())
-        if d < 0.02 and self.task_part == 0:
-            self.task_part = 1
-            self.close_gripper(render=True)
-            time.sleep(1)
-            self.angles = self.init_angles.copy()
-            for i in range(self.DoF):
-                self.move_joint(i, self.angles[i], render=True)
-            time.sleep(3)
-            return s, r, done, None
-        if self.task_part == 1 and abs(target[2] - pose[2]) < 0.05:
-            self.open_gripper(render=True)
-            time.sleep(2)
-            r += 10
-            done = True
         return s, r, done, None
 
     def reset(self):
@@ -233,33 +205,22 @@ class rozum_sim:
         time.sleep(2)
         angles = self.get_angles()
         pose = self.get_position(self.tip_handle)
-        orientation = self.get_orientation(self.or_handle)
-        # pose = [a *10 for a in pose]
         sin_cos = []
         for a in angles:
             sin_cos.append(np.sin(a))
             sin_cos.append(np.cos(a))
-        s = np.concatenate([pose,orientation, sin_cos], axis=0)
+        s = np.concatenate([pose, sin_cos], axis=0)
         return s
 
     def state_cost(self, state):
         # [8000,10]
-        if self.task_part == 0:
-            target= self.get_position(self.cube_handle)
-            target = torch.from_numpy(target).to(device).float()
-            target_or = torch.from_numpy(self.init_orientation).to(device).float()
-            dis = state[:, :3] - target
-            or_diff = state[:, 3:9] - target_or
-            # dis = state - self.env.target
-            cost = (dis ** 2).sum(dim=-1) + torch.mul((or_diff ** 2).sum(dim=-1),0.03)
-        else:
-            target = self.get_position(self.goal_handle)
-            target[2] += 0.1
-            target = torch.from_numpy(target).to(device).float()
-            dis = state[:, :3] - target
-            # dis = state - self.env.target
-            cost = (dis ** 2).sum(dim=-1)
-            # target = np.array([a*10 for a in target])
+        target = self.init_pose_cube.copy()
+        target[2] += 0.1
+        target = torch.from_numpy(target).to(device).float()
+        dis = state[:, :3] - target
+        # dis = state - self.env.target
+        cost = (dis ** 2).sum(dim=-1)
+        # target = np.array([a*10 for a in target])
         cost = -torch.exp(-cost)
         return cost
 
