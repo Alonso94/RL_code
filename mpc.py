@@ -9,8 +9,7 @@ from env.reacher_env import Reacher
 from env.env_sim import rozum_sim
 import random
 import matplotlib.pyplot as plt
-# import tensorflow as tf
-# from model import ensemble
+from env.env_real import rozum_real
 
 device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -98,7 +97,7 @@ class MPC:
         self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
         self.has_trained = False
         if load:
-            self.model.load_state_dict(torch.load("/home/ali/RL_code/models/ensemble_pick_e15_u6_s9+12_p30.pth",map_location=device))
+            self.model.load_state_dict(torch.load("/home/ali/RL_code/models/Real_pick_e15_u6_s9+12_p30.pth",map_location=device))
             self.model.eval()
             self.has_trained=True
         self.model.optim=torch.optim.Adam(self.model.parameters(),lr=0.001)
@@ -136,7 +135,7 @@ class MPC:
         idx=np.argsort(np.random.uniform(size=array.shape),axis=-1)
         return array[np.arange(array.shape[0])[:,None],idx]
 
-    def rollout(self, plot=True, max_length=50):
+    def rollout(self, plot=True, max_length=25):
         state = self.env.reset()
         ret=0
         times = []
@@ -200,28 +199,28 @@ class MPC:
             self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
             self.train_the_model()
             # self.evaluate(trial=i)
-        self.env.out.release()
-        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/ensemble_pick_e15_u6_s9+12_p30.pth")
+        # self.env.out.release()
+        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/Real_pick_e15_u6_s9+12_p30.pth")
         print("model saved!")
         plt.figure()
         plt.plot(self.xx, self.returns)
         plt.xlabel('Training step')
         plt.ylabel('Cumulative rewards')
         plt.show()
-        plt.savefig("/home/ali/RL_code/images/rewards.png")
+        plt.savefig("/home/ali/RL_code/real_results/rewards.png")
         plt.figure()
         plt.plot(self.xx, self.picked)
         plt.xlabel('Training step')
         plt.ylabel('Cube picked')
         plt.show()
-        plt.savefig("/home/ali/RL_code/images/pick.png")
+        plt.savefig("/home/ali/RL_code/real_results/pick.png")
         plt.show()
         plt.figure()
         plt.plot(self.xx, self.ds)
         plt.xlabel('Training step')
         plt.ylabel('done count')
         plt.show()
-        plt.savefig("/home/ali/RL_code/images/done.png")
+        plt.savefig("/home/ali/RL_code/real_results/done.png")
 
     def evaluate(self,max_length=50,trial=0):
         state = self.env.reset()
@@ -244,7 +243,7 @@ class MPC:
         plt.plot(xx, yy)
         plt.xlabel('time')
         plt.ylabel('distance')
-        plt.savefig("/home/ali/RL_code/images/step_response%d.png"%trial)
+        plt.savefig("/home/ali/RL_code/real_results/step_response%d.png"%trial)
         plt.show()
 
 
@@ -415,6 +414,7 @@ def set_global_seeds(seed):
 set_global_seeds(0)
 # env=Reacher()
 # env=CartPole()
-env=rozum_sim()
-mpc=MPC(env,load=False,render=True)
+# env=rozum_sim()
+env=rozum_real()
+mpc=MPC(env,load=False,render=False)
 mpc.run_the_whole_system(num_trials=50)

@@ -247,11 +247,12 @@ class rozum_sim:
         if self.task_part == 0:
             target= self.get_position(self.cube_handle)
             target = torch.from_numpy(target).to(device).float()
-            target_or = torch.from_numpy(self.init_orientation).to(device).float()
+            target_or=self.get_orientation(self.init_orientation)
+            target_or = torch.from_numpy(target_or).to(device).float()
             dis = state[:, :3] - target
             or_diff = state[:, 3:9] - target_or
             # dis = state - self.env.target
-            cost = (dis ** 2).sum(dim=-1) + torch.mul((or_diff ** 2).sum(dim=-1),0.03)
+            cost = (dis ** 2).sum(dim=-1) + torch.mul((or_diff ** 2).sum(dim=-1),0.5)
         else:
             target = self.get_position(self.goal_handle)
             target[2] += 0.1
