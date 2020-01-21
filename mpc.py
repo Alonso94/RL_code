@@ -9,7 +9,7 @@ from env.reacher_env import Reacher
 from env.env_sim import rozum_sim
 import random
 import matplotlib.pyplot as plt
-from env.env_real import rozum_real
+from env.env_real_cam import rozum_real
 
 device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -101,7 +101,7 @@ class MPC:
             self.model.eval()
             self.has_trained=True
         self.model.optim=torch.optim.Adam(self.model.parameters(),lr=0.001)
-        self.init_rollouts = 1
+        self.init_rollouts = 5
         self.n_train_iter=50
         self.rol_per_iter=1
         self.epochs=10
@@ -417,4 +417,4 @@ set_global_seeds(0)
 # env=rozum_sim()
 env=rozum_real()
 mpc=MPC(env,load=False,render=False)
-mpc.run_the_whole_system(num_trials=50)
+mpc.run_the_whole_system(num_trials=100)
