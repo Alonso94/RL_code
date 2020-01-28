@@ -242,7 +242,7 @@ class rozum_real:
         if d < 0.02 and self.task_part == 0:
             d_full = np.linalg.norm(features - self.task_1_target)
             # print("inside:",d_full)
-            if d_full < 0.1:
+            if d_full < 0.05:
                 self.saved_angles = angles.copy()
                 self.angles = self.init_angles.copy()
                 self.robot.update_joint_angles(self.angles)
@@ -251,9 +251,9 @@ class rozum_real:
                 r += 10
                 self.task_part = 1
                 return s, r, done, None
-        if d < 0.05 and self.task_part == 1:
+        if d < 0.02 and self.task_part == 1:
             d_full = np.linalg.norm(features - self.task_1_target)
-            if d_full < 0.1:
+            if d_full < 0.05:
                 self.robot.close_gripper()
                 time.sleep(1)
                 self.angles = self.init_angles.copy()
