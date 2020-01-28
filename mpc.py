@@ -112,7 +112,7 @@ class MPC:
         self.opt_ub = np.tile(self.action_ub, [self.horizon])
         self.population_size=400
         self.n_elites=40
-        self.max_iter=5
+        self.max_iter=10
         self.alpha=0.1
         self.var_min=0.001
         # np.ile repeat the value
@@ -206,21 +206,20 @@ class MPC:
         plt.plot(self.xx, self.returns)
         plt.xlabel('Training step')
         plt.ylabel('Cumulative rewards')
-        plt.show()
         plt.savefig("/home/ali/RL_code/real_results/rewards.png")
+        plt.show()
         plt.figure()
         plt.plot(self.xx, self.picked)
         plt.xlabel('Training step')
         plt.ylabel('Cube picked')
-        plt.show()
         plt.savefig("/home/ali/RL_code/real_results/pick.png")
         plt.show()
         plt.figure()
         plt.plot(self.xx, self.ds)
         plt.xlabel('Training step')
         plt.ylabel('done count')
-        plt.show()
         plt.savefig("/home/ali/RL_code/real_results/done.png")
+        plt.show()
 
     def evaluate(self,max_length=50,trial=0):
         state = self.env.reset()
@@ -357,7 +356,7 @@ class MPC:
             current_action=action_sequences[t]
             predicted_next_state=self.predict(current_state,current_action)
             state_cost=self.env.state_cost(predicted_next_state)
-            cost=state_cost#+self.env.action_cost(current_action)
+            cost=state_cost+self.env.action_cost(current_action)
             cost=cost.view(-1,self.n_particles)
             costs+=cost
             current_state=predicted_next_state

@@ -12,6 +12,7 @@ import torch
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
+
 class Rozum:
     def __init__(self):
         self.host = "http://10.10.10.20:8081"
@@ -52,7 +53,7 @@ class Rozum:
         for a in orientation:
             sin_cos.append(np.sin(a))
             sin_cos.append(np.cos(a))
-        return np.array(position),np.array(sin_cos)
+        return np.array(position), np.array(sin_cos)
 
     def send_position(self):
         # speed 10
@@ -91,6 +92,7 @@ class Rozum:
             self.position[i] = position[i]
             self.orientation[i] = orientation[i]
 
+
 # bufferless VideoCapture
 class VideoCapture:
 
@@ -127,12 +129,12 @@ class rozum_real:
         # self.action_bound = [[-15,15],[-10,110],[-30,30],[-120,120],[-180,180],[-180,180]]
         self.action_bound = [[-240, -180], [-180, 180], [-180, 180], [-220, -100], [-180, 180], [-180, 180]]
         self.action_range = [-5, 5]
-        self.cam=VideoCapture(2)
+        self.cam = VideoCapture(0)
         self.w = self.cam.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.h = self.cam.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         self.action_space = gym.spaces.Box(shape=(self.DoF,), low=-5, high=5)
-        self.observation_space = gym.spaces.Box(shape=(5+self.DoF * 2,), low=-1, high=1)
+        self.observation_space = gym.spaces.Box(shape=(5 + self.DoF * 2,), low=-1, high=1)
         self.action_dim = self.action_space.shape[0]
         self.state_dim = self.observation_space.shape[0]
 
@@ -145,10 +147,10 @@ class rozum_real:
         self.task_part = 0
         self.part_1_center = np.array([300.0 / 640, 335.0 / 480])
         self.part_2_center = np.array([320.0 / 640, 290.0 / 480])
-        self.part_1_area = 0.25
+        self.part_1_area = 0.2
         self.part_2_area = 0.75
-        self.task_1_target=np.array([self.part_1_center[0],self.part_1_center[1],self.part_1_area,0.0,1.0])
-        self.task_2_target = np.array([self.part_2_center[0],self.part_2_center[1], self.part_2_area, 0.0, 1.0])
+        self.task_1_target = np.array([self.part_1_center[0], self.part_1_center[1], self.part_1_area, 0.0, 1.0])
+        self.task_2_target = np.array([self.part_2_center[0], self.part_2_center[1], self.part_2_area, 0.0, 1.0])
         # self.target=np.array([-0.375, 0.441, 0.357])
         # self.count=0
 
@@ -162,13 +164,11 @@ class rozum_real:
         self.init_angles = [-210.0, -110.0, 0.0, -160.0, 90.0, -35.0]
         self.s = self.reset()
         self.angles = self.init_angles.copy()
-        self.saved_angles=self.init_angles.copy()
-
+        self.saved_angles = self.init_angles.copy()
 
         # task part
         self.task_part = 0
         self.robot.open_gripper()
-
 
     def sample_action(self):
         return np.random.uniform(*self.action_bound, size=self.action_dim)
@@ -177,6 +177,13 @@ class rozum_real:
         while True:
             self.currents = self.robot.get_joints_current()
 
+    def get_inclination(self, box):
+        th1 = np.arctan2(box[0, 1] - box[1, 1], box[0, 0] - box[1, 0])
+        th2 = np.arctan2(box[1, 1] - box[2, 1], box[1, 0] - box[2, 0])
+        th3 = np.arctan2(box[2, 1] - box[3, 1], box[2, 0] - box[3, 0])
+        th4 = np.arctan2(box[3, 1] - box[0, 1], box[3, 0] - box[0, 0])
+        th=th1+th2+th3+th4-np.pi
+        return th
 
     def image_processing(self, img, lower, upper, num_iter):
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -192,21 +199,21 @@ class rozum_real:
         angle = 0
         if len(cnt) > 0:
             rect = cv2.minAreaRect(cnt[0])
-            angle = rect[2]
             box = cv2.boxPoints(rect)
             box = np.int0(box)
+            angle = self.get_inclination(box)
             center = np.average(box, axis=0)
             area = cv2.contourArea(cnt[0])
             area_percentage = area / (640 * 480)
-        features=np.array([center[0]/640,center[1]/480,area_percentage,np.sin(angle),np.cos(angle)])
+        features = np.array([center[0] / 640, center[1] / 480, area_percentage, np.sin(angle), np.cos(angle)])
         return features
 
     def step(self, action):
         self.angles = self.robot.get_joint_angles()
         for i in range(self.DoF):
-            angle=self.angles[i] + action[i]
+            angle = self.angles[i] + action[i]
             angle = np.clip(angle, *self.action_bound[i])
-            self.angles[i]=angle.copy()
+            self.angles[i] = angle.copy()
         self.robot.update_joint_angles(self.angles)
         self.robot.send_joint_angles()
         angles = self.robot.get_joint_angles()
@@ -218,33 +225,35 @@ class rozum_real:
         r = 0.0
         done = False
         if self.task_part == 0:
-            features=self.image_processing(img, self.goal_l, self.goal_u, [2, 2])
+            features = self.image_processing(img, self.goal_l, self.goal_u, [2, 2])
             target = self.part_1_center.copy()
             r = 0.0
         else:
-            features=self.image_processing(img, self.cube_l, self.cube_u, [2, 2])
+            features = self.image_processing(img, self.cube_l, self.cube_u, [2, 2])
             target = self.part_2_center.copy()
-            target[2] += 0.1
             r += 10
         s = np.concatenate([features, sin_cos], axis=0)
-        if features[2]<0.05:
-            done=True
-            return s,r,done,None
+        if features[2] < 0.05:
+            done = True
+            return s, r, done, None
         d = np.linalg.norm(features[:2] - target)
+        # print("d",d)
         r += (-d - 0.01 * np.square(action).sum())
-        if d < 0.05 and self.task_part == 0:
+        if d < 0.02 and self.task_part == 0:
             d_full = np.linalg.norm(features - self.task_1_target)
-            if d_full<0.03:
-                self.saved_angles=angles.copy()
+            # print("inside:",d_full)
+            if d_full < 0.1:
+                self.saved_angles = angles.copy()
                 self.angles = self.init_angles.copy()
                 self.robot.update_joint_angles(self.angles)
                 self.robot.send_joint_angles()
                 time.sleep(3)
                 r += 10
-                self.task_part=1
-        if d < 0.02 and self.task_part == 1:
+                self.task_part = 1
+                return s, r, done, None
+        if d < 0.05 and self.task_part == 1:
             d_full = np.linalg.norm(features - self.task_1_target)
-            if d_full<0.03:
+            if d_full < 0.1:
                 self.robot.close_gripper()
                 time.sleep(1)
                 self.angles = self.init_angles.copy()
@@ -279,21 +288,23 @@ class rozum_real:
     def state_cost(self, state):
         # [8000,10]
         if self.task_part == 0:
-            target = self.part_1_center.copy()
+            # target = self.part_1_center.copy()
             target_full = self.task_1_target.copy()
+            target=target_full.copy()[:2]
         else:
-            target = self.part_2_center.copy()
+            # target = self.part_2_center.copy()
             target_full = self.task_2_target.copy()
+            target = target_full.copy()[:2]
         target = torch.from_numpy(target).to(device).float()
         dis = state[:, :2] - target
         # if torch.max(dis) < 0.02:
         target_full = torch.from_numpy(target_full).to(device).float()
-        diff = state[:,:5] - target_full
-        cost = (dis ** 2).sum(dim=-1) + torch.mul((diff ** 2).sum(dim=-1), 0.1)
+        diff = state[:, :5] - target_full
+        cost = (dis ** 2).sum(dim=-1) + torch.mul((diff ** 2).sum(dim=-1), 0.3)
         # else:
         #     cost = (dis ** 2).sum(dim=-1)
         cost = -torch.exp(-cost)
-        cost[state[:,3]<0.1]=1e6
+        cost[state[:, 2] < 0.1] = 1e6
         return cost
 
     @staticmethod
