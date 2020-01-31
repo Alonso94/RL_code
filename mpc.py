@@ -135,7 +135,7 @@ class MPC:
         idx=np.argsort(np.random.uniform(size=array.shape),axis=-1)
         return array[np.arange(array.shape[0])[:,None],idx]
 
-    def rollout(self, plot=True, max_length=25):
+    def rollout(self, plot=True, max_length=50):
         state = self.env.reset()
         ret=0
         times = []
@@ -150,7 +150,11 @@ class MPC:
                 self.x+=1
             states.append(state)
             actions.append(action)
-            state, reward, done, _ = self.env.step(action)
+            state, reward, done, inf = self.env.step(action)
+            if inf!=None:
+                states.pop(-1)
+                actions.pop(-1)
+                continue
             next_states.append(state)
             # state=next_state.copy()
             ret += reward
@@ -415,5 +419,5 @@ set_global_seeds(0)
 # env=CartPole()
 # env=rozum_sim()
 env=rozum_real()
-mpc=MPC(env,load=True,render=False)
+mpc=MPC(env,load=False,render=False)
 mpc.run_the_whole_system(num_trials=100)

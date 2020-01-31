@@ -175,7 +175,7 @@ class rozum_real:
 
     def current_reader(self):
         while True:
-            self.currents = self.robot.get_joints_current()
+            self.currents = np.array(self.robot.get_joints_current())
 
     def get_inclination(self, box):
         th1 = np.arctan2(box[0, 1] - box[1, 1], box[0, 0] - box[1, 0])
@@ -236,24 +236,27 @@ class rozum_real:
         if features[2] < 0.05:
             done = True
             return s, r, done, None
+        if max(self.currents)>0.2:
+            done = True
+            return s, r, done, None
         d = np.linalg.norm(features[:2] - target)
         # print("d",d)
         r += (-d - 0.01 * np.square(action).sum())
-        if d < 0.02 and self.task_part == 0:
+        if d < 0.03 and self.task_part == 0:
             d_full = np.linalg.norm(features - self.task_1_target)
             # print("inside:",d_full)
-            if d_full < 0.05:
+            if d_full < 0.08:
                 self.saved_angles = angles.copy()
                 self.angles = self.init_angles.copy()
                 self.robot.update_joint_angles(self.angles)
                 self.robot.send_joint_angles()
-                time.sleep(3)
+                time.sleep(1)
                 r += 10
                 self.task_part = 1
-                return s, r, done, None
-        if d < 0.02 and self.task_part == 1:
+                return s, r, done, 1
+        if d < 0.03 and self.task_part == 1:
             d_full = np.linalg.norm(features - self.task_1_target)
-            if d_full < 0.05:
+            if d_full < 0.08:
                 self.robot.close_gripper()
                 time.sleep(1)
                 self.angles = self.init_angles.copy()
@@ -300,11 +303,18 @@ class rozum_real:
         # if torch.max(dis) < 0.02:
         target_full = torch.from_numpy(target_full).to(device).float()
         diff = state[:, :5] - target_full
-        cost = (dis ** 2).sum(dim=-1) + torch.mul((diff ** 2).sum(dim=-1), 0.3)
-        # else:
-        #     cost = (dis ** 2).sum(dim=-1)
+        if torch.max(dis)<0.02:
+            cost = (dis ** 2).sum(dim=-1)
+        else:
+            cost = (dis ** 2).sum(dim=-1)+ torch.mul((diff ** 2).sum(dim=-1), 0.7)
         cost = -torch.exp(-cost)
         cost[state[:, 2] < 0.1] = 1e6
+        # if self.task_part==0:
+        #     cost[state[:, 2] > 0.5] = 1e6
+        # else:
+        #     cost[state[:, 2] > 0.8] = 1e6
+        #     cost[torch.abs(state[:, 3]) > 0.4] = 1e6
+        #     cost[torch.abs(state[:, 4]) < 0.6] = 1e6
         return cost
 
     @staticmethod
