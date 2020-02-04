@@ -129,7 +129,7 @@ class rozum_real:
         # self.action_bound = [[-15,15],[-10,110],[-30,30],[-120,120],[-180,180],[-180,180]]
         self.action_bound = [[-240, -180], [-180, 180], [-180, 180], [-220, -100], [-180, 180], [-180, 180]]
         self.action_range = [-5, 5]
-        self.cam = VideoCapture(0)
+        self.cam = VideoCapture(2)
         self.w = self.cam.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.h = self.cam.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
@@ -149,8 +149,8 @@ class rozum_real:
         self.part_2_center = np.array([320.0 / 640, 290.0 / 480])
         self.part_1_area = 0.2
         self.part_2_area = 0.75
-        self.task_1_target = np.array([self.part_1_center[0], self.part_1_center[1], self.part_1_area, 0.0, 1.0])
-        self.task_2_target = np.array([self.part_2_center[0], self.part_2_center[1], self.part_2_area, 0.0, 1.0])
+        self.task_1_target = np.array([self.part_1_center[0], self.part_1_center[1], self.part_1_area*2, 0.0, 1.0])
+        self.task_2_target = np.array([self.part_2_center[0], self.part_2_center[1], self.part_2_area*2, 0.0, 1.0])
         # self.target=np.array([-0.375, 0.441, 0.357])
         # self.count=0
 
@@ -205,7 +205,7 @@ class rozum_real:
             center = np.average(box, axis=0)
             area = cv2.contourArea(cnt[0])
             area_percentage = area / (640 * 480)
-        features = np.array([center[0] / 640, center[1] / 480, area_percentage, np.sin(angle), np.cos(angle)])
+        features = np.array([center[0] / 640, center[1] / 480, area_percentage*2, np.sin(angle), np.cos(angle)])
         return features
 
     def step(self, action):
@@ -233,10 +233,10 @@ class rozum_real:
             target = self.part_2_center.copy()
             r += 10
         s = np.concatenate([features, sin_cos], axis=0)
-        if features[2] < 0.05:
+        if features[2] < 0.1:
             done = True
             return s, r, done, None
-        if max(self.currents)>0.2:
+        if max(self.currents)>0.1:
             done = True
             return s, r, done, None
         d = np.linalg.norm(features[:2] - target)
@@ -256,7 +256,7 @@ class rozum_real:
                 return s, r, done, 1
         if d < 0.03 and self.task_part == 1:
             d_full = np.linalg.norm(features - self.task_1_target)
-            if d_full < 0.08:
+            if d_full < 0.05:
                 self.robot.close_gripper()
                 time.sleep(1)
                 self.angles = self.init_angles.copy()
@@ -269,6 +269,7 @@ class rozum_real:
                 time.sleep(3)
                 self.robot.open_gripper()
                 done = True
+                r+=300
                 return s, r, done, None
         return s, r, done, None
 
@@ -303,18 +304,15 @@ class rozum_real:
         # if torch.max(dis) < 0.02:
         target_full = torch.from_numpy(target_full).to(device).float()
         diff = state[:, :5] - target_full
-        if torch.max(dis)<0.02:
-            cost = (dis ** 2).sum(dim=-1)
+        if self.task_part==0:
+            if torch.max(dis)<0.02:
+                cost = (dis ** 2).sum(dim=-1)
+            else:
+                cost = (dis ** 2).sum(dim=-1)+ torch.mul((diff ** 2).sum(dim=-1), 0.7)
         else:
-            cost = (dis ** 2).sum(dim=-1)+ torch.mul((diff ** 2).sum(dim=-1), 0.7)
+            cost = (diff ** 2).sum(dim=-1)
         cost = -torch.exp(-cost)
-        cost[state[:, 2] < 0.1] = 1e6
-        # if self.task_part==0:
-        #     cost[state[:, 2] > 0.5] = 1e6
-        # else:
-        #     cost[state[:, 2] > 0.8] = 1e6
-        #     cost[torch.abs(state[:, 3]) > 0.4] = 1e6
-        #     cost[torch.abs(state[:, 4]) < 0.6] = 1e6
+        cost[state[:, 2] < 0.2] = 1e6
         return cost
 
     @staticmethod
