@@ -147,10 +147,10 @@ class rozum_real:
         self.task_part = 0
         self.part_1_center = np.array([300.0 / 640, 335.0 / 480])
         self.part_2_center = np.array([320.0 / 640, 290.0 / 480])
-        self.part_1_area = 0.2
+        self.part_1_area = 0.22
         self.part_2_area = 0.75
-        self.task_1_target = np.array([self.part_1_center[0], self.part_1_center[1], self.part_1_area*2, 0.0, 1.0])
-        self.task_2_target = np.array([self.part_2_center[0], self.part_2_center[1], self.part_2_area*2, 0.0, 1.0])
+        self.task_1_target = np.array([self.part_1_center[0], self.part_1_center[1], self.part_1_area, 0.0, 1.0])
+        self.task_2_target = np.array([self.part_2_center[0], self.part_2_center[1], self.part_2_area, 0.0, 1.0])
         # self.target=np.array([-0.375, 0.441, 0.357])
         # self.count=0
 
@@ -205,7 +205,7 @@ class rozum_real:
             center = np.average(box, axis=0)
             area = cv2.contourArea(cnt[0])
             area_percentage = area / (640 * 480)
-        features = np.array([center[0] / 640, center[1] / 480, area_percentage*2, np.sin(angle), np.cos(angle)])
+        features = np.array([center[0] / 640, center[1] / 480, area_percentage, np.sin(angle), np.cos(angle)])
         return features
 
     def step(self, action):
@@ -233,7 +233,7 @@ class rozum_real:
             target = self.part_2_center.copy()
             r += 10
         s = np.concatenate([features, sin_cos], axis=0)
-        if features[2] < 0.1:
+        if features[2] < 0.05:
             done = True
             return s, r, done, None
         if max(self.currents)>0.1:
@@ -243,9 +243,10 @@ class rozum_real:
         # print("d",d)
         r += (-d - 0.01 * np.square(action).sum())
         if d < 0.03 and self.task_part == 0:
-            d_full = np.linalg.norm(features - self.task_1_target)
+            # d_full = np.linalg.norm(features - self.task_1_target)
             # print("inside:",d_full)
-            if d_full < 0.08:
+            # if d_full < 0.08:
+            if abs(features[2]-self.part_1_area)<0.07 and abs(features[3]-0.0)<0.2 and abs(features[4]-1.0)<0.2:
                 self.saved_angles = angles.copy()
                 self.angles = self.init_angles.copy()
                 self.robot.update_joint_angles(self.angles)
@@ -254,9 +255,10 @@ class rozum_real:
                 r += 10
                 self.task_part = 1
                 return s, r, done, 1
-        if d < 0.03 and self.task_part == 1:
-            d_full = np.linalg.norm(features - self.task_1_target)
-            if d_full < 0.05:
+        if d < 0.05 and self.task_part == 1:
+            # d_full = np.linalg.norm(features - self.task_1_target)
+            # if d_full < 0.05:
+            if abs(features[2]-self.part_2_area)<0.05 and abs(features[3]-0.0)<0.1 and abs(features[4]-1.0)<0.1:
                 self.robot.close_gripper()
                 time.sleep(1)
                 self.angles = self.init_angles.copy()
@@ -303,16 +305,21 @@ class rozum_real:
         dis = state[:, :2] - target
         # if torch.max(dis) < 0.02:
         target_full = torch.from_numpy(target_full).to(device).float()
-        diff = state[:, :5] - target_full
-        if self.task_part==0:
-            if torch.max(dis)<0.02:
-                cost = (dis ** 2).sum(dim=-1)
-            else:
-                cost = (dis ** 2).sum(dim=-1)+ torch.mul((diff ** 2).sum(dim=-1), 0.7)
-        else:
-            cost = (diff ** 2).sum(dim=-1)
+        area_diff = state[:, 2] - target_full[2]
+        angle_diff = state[:, 3:5] - target_full[3:5]
+        k1=0.5
+        k2=0.5
+        if torch.max(dis)<0.02:
+            k1=0.7
+            k2=0.7
+            if torch.max(area_diff)<0.05:
+                k1=0.7
+                k2=0.9
+        k1=1.0
+        k2=1.0
+        cost = (dis ** 2).sum(dim=-1) + torch.mul((area_diff ** 2), k1)+torch.mul((angle_diff ** 2).sum(dim=-1), k2)
         cost = -torch.exp(-cost)
-        cost[state[:, 2] < 0.2] = 1e6
+        cost[state[:, 2] < 0.1] = 1e6
         return cost
 
     @staticmethod
