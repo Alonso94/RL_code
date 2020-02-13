@@ -98,9 +98,9 @@ class MPC:
         self.model2 = ensemble(self.E, self.input_size, self.output_size).to(device)
         self.has_trained = False
         if load:
-            self.model1.load_state_dict(torch.load("/home/ali/RL_code/models/part1_e15_u6_s9+12_p30.pth",map_location=device))
+            self.model1.load_state_dict(torch.load("/home/ali/RL_code/models/Real_pick_e15_u6_s9+12_p30.pth",map_location=device))
             self.model1.eval()
-            self.model2.load_state_dict(torch.load("/home/ali/RL_code/models/part2_e15_u6_s9+12_p30.pth", map_location=device))
+            self.model2.load_state_dict(torch.load("/home/ali/RL_code/models/Real_pick_e15_u6_s9+12_p30.pth", map_location=device))
             self.model2.eval()
             self.has_trained=True
         self.model1.optim=torch.optim.Adam(self.model1.parameters(),lr=0.001)
@@ -110,7 +110,7 @@ class MPC:
         self.n_train_iter=50
         self.rol_per_iter=1
         self.epochs=10
-        self.batch_size=64
+        self.batch_size=32
         # CEM parameters
         self.solution_dim=self.horizon*self.action_dim
         self.opt_lb=np.tile(self.action_lb,[self.horizon])
@@ -147,6 +147,7 @@ class MPC:
         ret=0
         times = []
         next_states, states, actions, rewards = [], [], [], []
+        next_states2, states2, actions2=[],[],[]
         train_range=trange(max_length)
         for t in train_range:
             start = time.time()
@@ -155,15 +156,22 @@ class MPC:
             times.append(end-start)
             if self.has_trained:
                 self.x+=1
-            states.append(state)
-            actions.append(action)
+            if self.task_part==0:
+                states.append(state)
+                actions.append(action)
+            else:
+                states2.append(state)
+                actions2.append(action)
             state, reward, done, inf = self.env.step(action)
             if inf!=self.task_part:
                 self.task_part=inf
                 states.pop(-1)
                 actions.pop(-1)
                 continue
-            next_states.append(state)
+            if self.task_part==0:
+                next_states.append(state)
+            else:
+                next_states2.append(state)
             # state=next_state.copy()
             ret += reward
             # if self.render:
@@ -186,43 +194,48 @@ class MPC:
             plt.show()
             print("\nAverage action selection time = ", np.mean(times))
         print("episode length = ",len(states))
-        return states, actions, next_states, ret
+        return states, actions, next_states, ret,states2,actions2,next_states2
 
     def collect_data(self, n_rollouts=1):
         inputs, outputs = [], []
+        inputs2, outputs2 = [], []
         for i in range(n_rollouts):
-            states, actions, next_states, ret = self.rollout()
+            states, actions, next_states, ret ,states2,actions2,next_states2= self.rollout()
             input_ = np.concatenate([np.array(states), np.array(actions)], axis=-1)
+            input2_ = np.concatenate([np.array(states2), np.array(actions2)], axis=-1)
             inputs.append(input_)
+            inputs2.append(input2_)
             outputs.append(np.array(next_states) - np.array(states))
-        return inputs, outputs
+            outputs2.append(np.array(next_states2) - np.array(states2))
+        return inputs, outputs,inputs2,outputs2
 
     def run_the_whole_system(self,num_trials=60):
         if not self.has_trained:
             # prepare inputs and output
-            D_inputs, D_outputs = self.collect_data(n_rollouts=self.init_rollouts)
-            self.train_in1 = np.concatenate([self.train_in1] + D_inputs, axis=0)
-            self.train_out1 = np.concatenate([self.train_out1] + D_outputs, axis=0)
+            D1_inputs, D1_outputs,D2_inputs, D2_outputs = self.collect_data(n_rollouts=self.init_rollouts)
+            self.train_in1 = np.concatenate([self.train_in1] + D1_inputs, axis=0)
+            self.train_out1 = np.concatenate([self.train_out1] + D1_outputs, axis=0)
             self.train_the_model(self.model1,self.train_in1,self.train_out1)
+            if self.task_part==1:
+                self.train_in2 = np.concatenate([self.train_in2] + D2_inputs, axis=0)
+                self.train_out2 = np.concatenate([self.train_out2] + D2_outputs, axis=0)
+                self.train_the_model(self.model2, self.train_in2, self.train_out2)
         for i in range(num_trials):
             print("start training ...")
-            D_inputs, D_outputs = self.collect_data(n_rollouts=self.rol_per_iter)
-            if self.task_part==0:
-                self.train_in1 = np.concatenate([self.train_in1] + D_inputs, axis=0)
-                self.train_out1 = np.concatenate([self.train_out1] + D_outputs, axis=0)
-            else:
-                self.train_in2 = np.concatenate([self.train_in2] + D_inputs, axis=0)
-                self.train_out2 = np.concatenate([self.train_out2] + D_outputs, axis=0)
-            self.train_the_model(self.model1,self.train_in1,self.train_out1)
-            if self.task_part == 0:
-                self.train_the_model(self.model2,self.train_in2,self.train_out2)
-
-            # self.evaluate(trial=i)
-        # self.env.out.release()
-            if i%5==0:
+            D1_inputs, D1_outputs, D2_inputs, D2_outputs = self.collect_data(n_rollouts=self.rol_per_iter)
+            self.train_in1 = np.concatenate([self.train_in1] + D1_inputs, axis=0)
+            self.train_out1 = np.concatenate([self.train_out1] + D1_outputs, axis=0)
+            self.train_the_model(self.model1, self.train_in1, self.train_out1)
+            if self.task_part == 1:
+                self.train_in2 = np.concatenate([self.train_in2] + D2_inputs, axis=0)
+                self.train_out2 = np.concatenate([self.train_out2] + D2_outputs, axis=0)
+                self.train_the_model(self.model2, self.train_in2, self.train_out2)
+            if (i+1)%10==0:
                 torch.save(self.model1.state_dict(),"/home/ali/RL_code/models/part1_e15_u6_s9+12_p30.pth")
                 torch.save(self.model2.state_dict(), "/home/ali/RL_code/models/part2_e15_u6_s9+12_p30.pth")
                 print("model saved!")
+            # self.evaluate(trial=i)
+        # self.env.out.release()
         plt.figure()
         plt.plot(self.xx, self.returns)
         plt.xlabel('Training step')
@@ -444,5 +457,5 @@ set_global_seeds(0)
 # env=rozum_sim()
 env=rozum_real()
 mpc=MPC(env,load=True,render=False)
-mpc.run_the_whole_system(num_trials=50)
+mpc.run_the_whole_system(num_trials=10)
 mpc.evaluate()
