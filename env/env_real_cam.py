@@ -129,7 +129,7 @@ class rozum_real:
         # self.action_bound = [[-15,15],[-10,110],[-30,30],[-120,120],[-180,180],[-180,180]]
         self.action_bound = [[-240, -180], [-180, 180], [-180, 180], [-220, -100], [-180, 180], [-180, 180]]
         self.action_range = [-5, 5]
-        self.cam = VideoCapture(2)
+        self.cam = VideoCapture(0)
         self.w = self.cam.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.h = self.cam.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
@@ -235,14 +235,14 @@ class rozum_real:
         s = np.concatenate([features, sin_cos], axis=0)
         if features[2] < 0.05:
             done = True
-            return s, r, done, None
+            return s, r, done, self.task_part
         if max(self.currents)>0.1:
             done = True
-            return s, r, done, None
+            return s, r, done, self.task_part
         d = np.linalg.norm(features[:2] - target)
         # print("d",d)
         r += (-d - 0.01 * np.square(action).sum())
-        if d < 0.03 and self.task_part == 0:
+        if d < 0.05 and self.task_part == 0:
             # d_full = np.linalg.norm(features - self.task_1_target)
             # print("inside:",d_full)
             # if d_full < 0.08:
@@ -254,7 +254,7 @@ class rozum_real:
                 time.sleep(1)
                 r += 10
                 self.task_part = 1
-                return s, r, done, 1
+                return s, r, done, self.task_part
         if d < 0.05 and self.task_part == 1:
             # d_full = np.linalg.norm(features - self.task_1_target)
             # if d_full < 0.05:
@@ -272,8 +272,8 @@ class rozum_real:
                 self.robot.open_gripper()
                 done = True
                 r+=300
-                return s, r, done, None
-        return s, r, done, None
+                return s, r, done, self.task_part
+        return s, r, done, self.task_part
 
     def reset(self):
         self.task_part = 0
@@ -315,8 +315,9 @@ class rozum_real:
             if torch.max(area_diff)<0.05:
                 k1=0.7
                 k2=0.9
-        k1=1.0
-        k2=1.0
+        if self.task_part==0:
+            k1=1.0
+            k2=1.0
         cost = (dis ** 2).sum(dim=-1) + torch.mul((area_diff ** 2), k1)+torch.mul((angle_diff ** 2).sum(dim=-1), k2)
         cost = -torch.exp(-cost)
         cost[state[:, 2] < 0.1] = 1e6

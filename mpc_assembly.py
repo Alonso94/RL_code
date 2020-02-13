@@ -94,13 +94,18 @@ class MPC:
         self.E=15
         self.input_size=self.action_dim+self.state_dim
         self.output_size=self.state_dim
-        self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
+        self.model1=ensemble(self.E,self.input_size,self.output_size).to(device)
+        self.model2 = ensemble(self.E, self.input_size, self.output_size).to(device)
         self.has_trained = False
         if load:
-            self.model.load_state_dict(torch.load("/home/ali/RL_code/models/Real_pick_e15_u6_s9+12_p30.pth",map_location=device))
-            self.model.eval()
+            self.model1.load_state_dict(torch.load("/home/ali/RL_code/models/part1_e15_u6_s9+12_p30.pth",map_location=device))
+            self.model1.eval()
+            self.model2.load_state_dict(torch.load("/home/ali/RL_code/models/part2_e15_u6_s9+12_p30.pth", map_location=device))
+            self.model2.eval()
             self.has_trained=True
-        self.model.optim=torch.optim.Adam(self.model.parameters(),lr=0.001)
+        self.model1.optim=torch.optim.Adam(self.model1.parameters(),lr=0.001)
+        self.model2.optim = torch.optim.Adam(self.model2.parameters(), lr=0.001)
+        self.task_part=0
         self.init_rollouts = 5
         self.n_train_iter=50
         self.rol_per_iter=1
@@ -119,8 +124,10 @@ class MPC:
         self.init_variance=np.tile(np.square(self.action_ub-self.action_lb)/16.0,[self.horizon])
         # propagation parameters
         self.n_particles=30
-        self.train_in=np.array([]).reshape(0,self.action_dim+self.state_dim)
-        self.train_out=np.array([]).reshape(0,self.state_dim)
+        self.train_in1=np.array([]).reshape(0,self.action_dim+self.state_dim)
+        self.train_out1=np.array([]).reshape(0,self.state_dim)
+        self.train_in2 = np.array([]).reshape(0, self.action_dim + self.state_dim)
+        self.train_out2 = np.array([]).reshape(0, self.state_dim)
         # for plotting
         self.x=0
         self.count=0
@@ -151,7 +158,8 @@ class MPC:
             states.append(state)
             actions.append(action)
             state, reward, done, inf = self.env.step(action)
-            if inf!=None:
+            if inf!=self.task_part:
+                self.task_part=inf
                 states.pop(-1)
                 actions.pop(-1)
                 continue
@@ -193,19 +201,28 @@ class MPC:
         if not self.has_trained:
             # prepare inputs and output
             D_inputs, D_outputs = self.collect_data(n_rollouts=self.init_rollouts)
-            self.train_in = np.concatenate([self.train_in] + D_inputs, axis=0)
-            self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
-            self.train_the_model()
+            self.train_in1 = np.concatenate([self.train_in1] + D_inputs, axis=0)
+            self.train_out1 = np.concatenate([self.train_out1] + D_outputs, axis=0)
+            self.train_the_model(self.model1,self.train_in1,self.train_out1)
         for i in range(num_trials):
             print("start training ...")
             D_inputs, D_outputs = self.collect_data(n_rollouts=self.rol_per_iter)
-            self.train_in = np.concatenate([self.train_in] + D_inputs, axis=0)
-            self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
-            self.train_the_model()
+            if self.task_part==0:
+                self.train_in1 = np.concatenate([self.train_in1] + D_inputs, axis=0)
+                self.train_out1 = np.concatenate([self.train_out1] + D_outputs, axis=0)
+            else:
+                self.train_in2 = np.concatenate([self.train_in2] + D_inputs, axis=0)
+                self.train_out2 = np.concatenate([self.train_out2] + D_outputs, axis=0)
+            self.train_the_model(self.model1,self.train_in1,self.train_out1)
+            if self.task_part == 0:
+                self.train_the_model(self.model2,self.train_in2,self.train_out2)
+
             # self.evaluate(trial=i)
         # self.env.out.release()
-        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/Real_pick_e15_u6_s9+12_p30.pth")
-        print("model saved!")
+            if i%5==0:
+                torch.save(self.model1.state_dict(),"/home/ali/RL_code/models/part1_e15_u6_s9+12_p30.pth")
+                torch.save(self.model2.state_dict(), "/home/ali/RL_code/models/part2_e15_u6_s9+12_p30.pth")
+                print("model saved!")
         plt.figure()
         plt.plot(self.xx, self.returns)
         plt.xlabel('Training step')
@@ -234,7 +251,7 @@ class MPC:
         for t in train_range:
             action = self.act(state)
             x += 1
-            state, reward, done, _ = self.env.step(action)
+            state, reward, done, self.task_part = self.env.step(action)
             if self.env.task_part==0:
                 center=self.env.part_1_center
             else:
@@ -254,11 +271,11 @@ class MPC:
         plt.show()
 
 
-    def train_the_model(self):
-        self.model.get_input_stats(self.train_in)
+    def train_the_model(self,model,train_in,train_out):
+        model.get_input_stats(train_in)
         # sample from the data
         # E datasets, one for each neural network in the ensemble
-        idx=np.random.randint(self.train_in.shape[0],size=[self.E,self.train_in.shape[0]])
+        idx=np.random.randint(train_in.shape[0],size=[self.E,train_in.shape[0]])
         epoch_range=trange(self.epochs)
         num_batches=int(np.ceil(idx.shape[-1]/self.batch_size))
         for _ in epoch_range:
@@ -266,30 +283,30 @@ class MPC:
                 # take a batch
                 b_indx=idx[:,b*self.batch_size:(b+1)*self.batch_size]
                 # define the loss of the uncertainty and decay
-                loss=0.01*(self.model.max_logvar.sum()-self.model.min_logvar.sum())
-                loss+=self.model.compute_decays()
+                loss=0.01*(model.max_logvar.sum()-model.min_logvar.sum())
+                loss+=model.compute_decays()
                 # move data to GPU
-                train_in=torch.from_numpy(self.train_in[b_indx]).to(device).float()
-                train_out=torch.from_numpy(self.train_out[b_indx]).to(device).float()
+                train_in_=torch.from_numpy(train_in[b_indx]).to(device).float()
+                train_out_=torch.from_numpy(train_out[b_indx]).to(device).float()
                 # compute the output of the model
-                mean,logvar=self.model(train_in)
+                mean,logvar=model(train_in_)
                 # print(logvar)
                 inv_var=torch.exp(-logvar)
                 # compute the losses (to a scalar)
-                train_losses=((mean-train_out)**2)*inv_var+logvar
+                train_losses=((mean-train_out_)**2)*inv_var+logvar
                 train_losses=train_losses.mean(-1).mean(-1).sum()
                 # compute the full loss
                 loss+=train_losses
                 # train the model
-                self.model.optim.zero_grad()
+                model.optim.zero_grad()
                 loss.backward()
-                self.model.optim.step()
+                model.optim.step()
             idx=self.shufle_rows(idx)
         # just to get the loss
-        train_in = torch.from_numpy(self.train_in[idx[:5000]]).to(device).float()
-        train_out = torch.from_numpy(self.train_out[idx[:5000]]).to(device).float()
-        mean, _ = self.model(train_in)
-        train_losses = ((mean - train_out) ** 2).mean(-1).mean(-1)
+        train_in_ = torch.from_numpy(train_in[idx[:5000]]).to(device).float()
+        train_out_ = torch.from_numpy(train_out[idx[:5000]]).to(device).float()
+        mean, _ = model(train_in_)
+        train_losses = ((mean - train_out_) ** 2).mean(-1).mean(-1)
         print(train_losses.detach().cpu().numpy())
         self.has_trained=True
 
@@ -395,7 +412,10 @@ class MPC:
         #get the output of the model
         inputs=torch.cat((state,action),dim=-1)
         # mean [5,1600,10]
-        mean,logvar=self.model(inputs)
+        if self.task_part==0:
+            mean,logvar=self.model1(inputs)
+        else:
+            mean, logvar = self.model2(inputs)
         var=torch.exp(logvar)
         predicted_state=mean+torch.randn_like(mean,device=device)*var.sqrt()
         # [5,1600,10]
