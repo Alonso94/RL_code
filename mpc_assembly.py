@@ -149,6 +149,7 @@ class MPC:
         next_states, states, actions, rewards = [], [], [], []
         next_states2, states2, actions2=[],[],[]
         train_range=trange(max_length)
+        self.task_part=0
         for t in train_range:
             start = time.time()
             action = self.act(state)
