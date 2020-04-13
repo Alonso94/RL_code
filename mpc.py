@@ -10,6 +10,7 @@ from env.env_sim import rozum_sim
 import random
 import matplotlib.pyplot as plt
 from env.env_real_cam import rozum_real
+from env.env_sim_usb import rozum_sim
 
 device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -79,6 +80,7 @@ class ensemble(nn.Module):
 
 class MPC:
     def __init__(self,env,load=False,render=False):
+        self.load=load
         self.render=render
         self.env=env
         self.action_dim=env.action_dim
@@ -87,7 +89,7 @@ class MPC:
         self.action_lb=self.env.action_space.low
         self.action_ub=self.env.action_space.high
         # MPC parameters
-        self.horizon=5
+        self.horizon=3
         self.action_buffer=np.array([]).reshape(0,self.action_dim)
         self.previous_solution=np.tile((self.action_lb+self.action_ub)/2.0,[self.horizon])
         # Ensemble parameters
@@ -96,12 +98,18 @@ class MPC:
         self.output_size=self.state_dim
         self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
         self.has_trained = False
-        if load:
-            self.model.load_state_dict(torch.load("/home/ali/RL_code/models/Real_pick_e15_u6_s9+12_p30.pth",map_location=device))
+        if self.load:
+            self.model.load_state_dict(torch.load("/home/ali/RL_code/models/usb_e15_u6_s9+12_p30.pth",map_location=device))
             self.model.eval()
             self.has_trained=True
+            self.delayed_model=ensemble(self.E,self.input_size,self.output_size).to(device)
+            self.delayed_model.load_state_dict(torch.load("/home/ali/RL_code/models/usb_e15_u6_s9+12_p30.pth",map_location=device))
+            self.delayed_model.eval()
+            self.tau=0.1
+        self.epsilon=0.5
+        self.gamma=0.9
         self.model.optim=torch.optim.Adam(self.model.parameters(),lr=0.001)
-        self.init_rollouts = 5
+        self.init_rollouts = 1 if self.load else 5
         self.n_train_iter=50
         self.rol_per_iter=1
         self.epochs=10
@@ -110,8 +118,8 @@ class MPC:
         self.solution_dim=self.horizon*self.action_dim
         self.opt_lb=np.tile(self.action_lb,[self.horizon])
         self.opt_ub = np.tile(self.action_ub, [self.horizon])
-        self.population_size=400
-        self.n_elites=40
+        self.population_size=200
+        self.n_elites=20
         self.max_iter=10
         self.alpha=0.1
         self.var_min=0.001
@@ -144,6 +152,7 @@ class MPC:
         for t in train_range:
             start = time.time()
             action = self.act(state)
+            action += np.random.rand(*action.shape)*self.epsilon
             end = time.time()
             times.append(end-start)
             if self.has_trained:
@@ -159,7 +168,7 @@ class MPC:
             # state=next_state.copy()
             ret += reward
             # if self.render:
-            #     self.env.render()
+            #     self.env.add_to_video()
             if done:
                 break
         if self.has_trained and plot:
@@ -203,8 +212,8 @@ class MPC:
             self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
             self.train_the_model()
             # self.evaluate(trial=i)
-        # self.env.out.release()
-        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/Real_pick_e15_u6_s9+12_p30.pth")
+        self.env.out.release()
+        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/usb_e15_u6_s9+12_p30.pth")
         print("model saved!")
         plt.figure()
         plt.plot(self.xx, self.returns)
@@ -213,17 +222,17 @@ class MPC:
         plt.savefig("/home/ali/RL_code/real_results/rewards.png")
         plt.show()
         plt.figure()
-        plt.plot(self.xx, self.picked)
-        plt.xlabel('Training step')
-        plt.ylabel('Cube picked')
-        plt.savefig("/home/ali/RL_code/real_results/pick.png")
-        plt.show()
-        plt.figure()
-        plt.plot(self.xx, self.ds)
-        plt.xlabel('Training step')
-        plt.ylabel('done count')
-        plt.savefig("/home/ali/RL_code/real_results/done.png")
-        plt.show()
+        # plt.plot(self.xx, self.picked)
+        # plt.xlabel('Training step')
+        # plt.ylabel('Cube picked')
+        # plt.savefig("/home/ali/RL_code/real_results/pick.png")
+        # plt.show()
+        # plt.figure()
+        # plt.plot(self.xx, self.ds)
+        # plt.xlabel('Training step')
+        # plt.ylabel('done count')
+        # plt.savefig("/home/ali/RL_code/real_results/done.png")
+        # plt.show()
 
     def evaluate(self,max_length=50,trial=0):
         state = self.env.reset()
@@ -235,13 +244,9 @@ class MPC:
             action = self.act(state)
             x += 1
             state, reward, done, _ = self.env.step(action)
-            if self.env.task_part==0:
-                center=self.env.part_1_center
-            else:
-                center=self.env.part_2_center
-            d = np.linalg.norm(100*state[:2] - 100*center)
+            # d = np.linalg.norm(100*state[:2] - 100*center)
             xx.append(x)
-            yy.append(d)
+            # yy.append(d)
             if self.render:
                 self.env.render()
             if done:
@@ -285,6 +290,13 @@ class MPC:
                 loss.backward()
                 self.model.optim.step()
             idx=self.shufle_rows(idx)
+        #soft update
+        if self.load:
+            for param1,param2 in zip(self.model.parameters(),self.delayed_model.parameters()):
+                param2.data.copy_(self.tau*param1.data+(1-self.tau)*param2.data)
+                param1.data.copy_(param2)
+        # reduce exploration
+        self.epsilon*=self.gamma
         # just to get the loss
         train_in = torch.from_numpy(self.train_in[idx[:5000]]).to(device).float()
         train_out = torch.from_numpy(self.train_out[idx[:5000]]).to(device).float()
@@ -421,8 +433,9 @@ def set_global_seeds(seed):
 set_global_seeds(0)
 # env=Reacher()
 # env=CartPole()
-# env=rozum_sim()
-env=rozum_real()
-mpc=MPC(env,load=True,render=False)
-mpc.run_the_whole_system(num_trials=50)
-mpc.evaluate()
+render=True
+env=rozum_sim(render=render)
+# env=rozum_real()
+mpc=MPC(env,load=True,render=render)
+mpc.run_the_whole_system(num_trials=15)
+# mpc.evaluate()
