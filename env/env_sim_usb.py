@@ -174,13 +174,19 @@ class rozum_sim:
         orientation = self.get_orientation(self.socket_handle)
         target_pose = torch.from_numpy(pose).to(device).float()
         target_orientation = torch.from_numpy(orientation).to(device).float()
-        dis_pose = state[:, :3] - target_pose
-        dis_orientation=state[:,3:9] - target_orientation
+        dis_pose = ((state[:, :3] - target_pose)**2).sum(dim=-1) *10
+        # print(dis_pose*10)
+        dis_orientation=((state[:,3:9] - target_orientation)**2).sum(dim=-1)
+        # print(dis_orientation)
         # dis = state - self.env.target
-        cost= (dis_pose ** 2).sum(dim=-1) + torch.mul((dis_orientation ** 2).sum(dim=-1),0.07)
-        # cost = (dis ** 2).sum(dim=-1)
+        rew=1-dis_pose.pow(0.4)
+        # print(rew)
+        orient_pen=(1-dis_orientation).pow(1/dis_pose)
+        # print(orient_pen)
+        # x=input()
+        cost= - rew*orient_pen
         # target = np.array([a*10 for a in target])
-        cost = -torch.exp(-cost)
+        # cost = -torch.exp(-cost)
         return cost
 
     @staticmethod

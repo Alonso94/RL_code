@@ -89,7 +89,7 @@ class MPC:
         self.action_lb=self.env.action_space.low
         self.action_ub=self.env.action_space.high
         # MPC parameters
-        self.horizon=3
+        self.horizon=5
         self.action_buffer=np.array([]).reshape(0,self.action_dim)
         self.previous_solution=np.tile((self.action_lb+self.action_ub)/2.0,[self.horizon])
         # Ensemble parameters
@@ -99,11 +99,11 @@ class MPC:
         self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
         self.has_trained = False
         if self.load:
-            self.model.load_state_dict(torch.load("/home/ali/RL_code/models/usb_e15_u6_s9+12_p30.pth",map_location=device))
+            self.model.load_state_dict(torch.load("/home/ali/RL_code/models/new_usb_e15_u6_s9+12_p30.pth",map_location=device))
             self.model.eval()
             self.has_trained=True
             self.delayed_model=ensemble(self.E,self.input_size,self.output_size).to(device)
-            self.delayed_model.load_state_dict(torch.load("/home/ali/RL_code/models/usb_e15_u6_s9+12_p30.pth",map_location=device))
+            self.delayed_model.load_state_dict(torch.load("/home/ali/RL_code/models/new_usb_e15_u6_s9+12_p30.pth",map_location=device))
             self.delayed_model.eval()
             self.tau=0.1
         self.epsilon=0.5
@@ -118,7 +118,7 @@ class MPC:
         self.solution_dim=self.horizon*self.action_dim
         self.opt_lb=np.tile(self.action_lb,[self.horizon])
         self.opt_ub = np.tile(self.action_ub, [self.horizon])
-        self.population_size=200
+        self.population_size=400
         self.n_elites=20
         self.max_iter=10
         self.alpha=0.1
@@ -152,7 +152,7 @@ class MPC:
         for t in train_range:
             start = time.time()
             action = self.act(state)
-            action += np.random.rand(*action.shape)*self.epsilon
+            action += np.random.uniform(-1,1,*action.shape)*self.epsilon
             end = time.time()
             times.append(end-start)
             if self.has_trained:
@@ -213,7 +213,7 @@ class MPC:
             self.train_the_model()
             # self.evaluate(trial=i)
         self.env.out.release()
-        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/usb_e15_u6_s9+12_p30.pth")
+        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/new_usb_e15_u6_s9+12_p30.pth")
         print("model saved!")
         plt.figure()
         plt.plot(self.xx, self.returns)
@@ -436,6 +436,6 @@ set_global_seeds(0)
 render=True
 env=rozum_sim(render=render)
 # env=rozum_real()
-mpc=MPC(env,load=True,render=render)
-mpc.run_the_whole_system(num_trials=15)
+mpc=MPC(env,load=False,render=render)
+mpc.run_the_whole_system(num_trials=20)
 # mpc.evaluate()
