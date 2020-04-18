@@ -11,16 +11,17 @@ import subprocess, signal
 import torch
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-
-from threading import Thread
+print("GPU is available:",torch.cuda.is_available())
 
 
 class rozum_sim:
 
     def __init__(self,render):
         self.render=render
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        self.out = cv2.VideoWriter('output.mp4', fourcc, 15.0, (1024, 1024))
+        fourcc1 = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc2 = cv2.VideoWriter_fourcc(*'mp4v')
+        self.out1 = cv2.VideoWriter('out1.mp4', fourcc1, 15.0, (256, 256))
+        self.out2 = cv2.VideoWriter('out2.mp4', fourcc2, 15.0, (256, 256))
 
         self.DoF = 7
         # self.action_bound = [[-15,15],[-10,110],[-30,30],[-120,120],[-180,180],[-180,180]]
@@ -62,6 +63,9 @@ class rozum_sim:
         # for cameras
         self.cam_handle = self.get_handle('Vision_sensor')
         (code, res, im) = vrep.simxGetVisionSensorImage(self.ID, self.cam_handle, 0, const_v.simx_opmode_streaming)
+
+        self.cam2_handle = self.get_handle('Vision_sensor0')
+        (code, res, im) = vrep.simxGetVisionSensorImage(self.ID, self.cam2_handle, 0, const_v.simx_opmode_streaming)
 
         self.render_handle = self.get_handle('render')
         (code, res, im) = vrep.simxGetVisionSensorImage(self.ID, self.render_handle, 0, const_v.simx_opmode_streaming)
@@ -148,6 +152,10 @@ class rozum_sim:
         target=self.get_position(self.socket_handle)
         d = np.linalg.norm(pose - target)
         r += (-d - 0.01 * np.square(action).sum())
+        d_xy = np.linalg.norm(pose[:2] - target[:2])
+        d_z = np.linalg.norm(pose[2] - target[2])
+        if d_xy < 0.005 and d_z<0.02:
+            done=True
         return s, r, done, None
 
     def reset(self):
@@ -175,18 +183,11 @@ class rozum_sim:
         target_pose = torch.from_numpy(pose).to(device).float()
         target_orientation = torch.from_numpy(orientation).to(device).float()
         dis_pose = ((state[:, :3] - target_pose)**2).sum(dim=-1) *10
-        # print(dis_pose*10)
+        dis_xy_pose = ((state[:, :2] - target_pose[:2]) ** 2).sum(dim=-1) * 100
         dis_orientation=((state[:,3:9] - target_orientation)**2).sum(dim=-1)
-        # print(dis_orientation)
-        # dis = state - self.env.target
-        rew=1-dis_pose.pow(0.4)
-        # print(rew)
+        rew=(1-dis_pose.pow(0.4))+(1-dis_xy_pose.pow(0.4))
         orient_pen=(1-dis_orientation).pow(1/dis_pose)
-        # print(orient_pen)
-        # x=input()
         cost= - rew*orient_pen
-        # target = np.array([a*10 for a in target])
-        # cost = -torch.exp(-cost)
         return cost
 
     @staticmethod
@@ -194,11 +195,12 @@ class rozum_sim:
         return 0.01 * (action ** 2).sum(dim=1)
 
     def add_to_video(self):
-        img = self.get_image(self.render_handle)
+        img = self.get_image(self.cam_handle)
         img = cv2.cvtColor(img,cv2.COLOR_RGB2BGR)
-        # cv2.imshow("1",img)
-        # cv2.waitKey(25)
-        self.out.write(img)
+        self.out1.write(img)
+        img = self.get_image(self.cam2_handle)
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        self.out2.write(img)
 
 # env=rozum_sim()
 

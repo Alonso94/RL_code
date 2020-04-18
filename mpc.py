@@ -13,6 +13,7 @@ from env.env_real_cam import rozum_real
 from env.env_sim_usb import rozum_sim
 
 device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+print("GPU is available:",torch.cuda.is_available())
 
 
 def swish(x):
@@ -98,12 +99,14 @@ class MPC:
         self.output_size=self.state_dim
         self.model=ensemble(self.E,self.input_size,self.output_size).to(device)
         self.has_trained = False
+        self.load_from="/home/ali/RL_code/models/z_usb_e15_u6_s9+12_p30.pth"
+        self.save_to="/home/ali/RL_code/models/z_usb_e15_u6_s9+12_p30.pth"
         if self.load:
-            self.model.load_state_dict(torch.load("/home/ali/RL_code/models/new_usb_e15_u6_s9+12_p30.pth",map_location=device))
+            self.model.load_state_dict(torch.load(self.load_from,map_location=device))
             self.model.eval()
             self.has_trained=True
             self.delayed_model=ensemble(self.E,self.input_size,self.output_size).to(device)
-            self.delayed_model.load_state_dict(torch.load("/home/ali/RL_code/models/new_usb_e15_u6_s9+12_p30.pth",map_location=device))
+            self.delayed_model.load_state_dict(torch.load(self.load_from,map_location=device))
             self.delayed_model.eval()
             self.tau=0.1
         self.epsilon=0.5
@@ -167,8 +170,6 @@ class MPC:
             next_states.append(state)
             # state=next_state.copy()
             ret += reward
-            # if self.render:
-            #     self.env.add_to_video()
             if done:
                 break
         if self.has_trained and plot:
@@ -212,8 +213,9 @@ class MPC:
             self.train_out = np.concatenate([self.train_out] + D_outputs, axis=0)
             self.train_the_model()
             # self.evaluate(trial=i)
-        self.env.out.release()
-        torch.save(self.model.state_dict(),"/home/ali/RL_code/models/new_usb_e15_u6_s9+12_p30.pth")
+        self.env.out1.release()
+        self.env.out2.release()
+        torch.save(self.model.state_dict(),self.save_to)
         print("model saved!")
         plt.figure()
         plt.plot(self.xx, self.returns)
@@ -234,7 +236,7 @@ class MPC:
         # plt.savefig("/home/ali/RL_code/real_results/done.png")
         # plt.show()
 
-    def evaluate(self,max_length=50,trial=0):
+    def evaluate(self,max_length=25,trial=0):
         state = self.env.reset()
         x=0
         train_range = trange(max_length)
@@ -248,7 +250,7 @@ class MPC:
             xx.append(x)
             # yy.append(d)
             if self.render:
-                self.env.render()
+                self.env.add_to_video
             if done:
                 break
         plt.figure()
@@ -436,6 +438,6 @@ set_global_seeds(0)
 render=True
 env=rozum_sim(render=render)
 # env=rozum_real()
-mpc=MPC(env,load=False,render=render)
-mpc.run_the_whole_system(num_trials=20)
+mpc=MPC(env,load=True,render=render)
+mpc.run_the_whole_system(num_trials=15)
 # mpc.evaluate()
